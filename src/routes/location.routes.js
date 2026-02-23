@@ -72,13 +72,14 @@ router.get('/search-places', authenticate, async (req, res, next) => {
       placeId: r.PlaceId || '',
       label: r.Title || '',
       address: r.Address?.Label || '',
-      city: r.Address?.Municipality || '',
-      region: r.Address?.Region || '',
-      country: r.Address?.Country || '',
+      city: r.Address?.Locality || '',
+      region: r.Address?.Region?.Name || '',
+      country: r.Address?.Country?.Name || '',
       latitude: r.Position?.[1] || 0,
       longitude: r.Position?.[0] || 0,
     }));
 
+    console.log(`[location]   → ${results.length} results`);
     res.json({ success: true, data: results });
   } catch (err) {
     next(err);
@@ -110,9 +111,9 @@ router.get('/reverse-geocode', authenticate, async (req, res, next) => {
         placeId: r.PlaceId || '',
         label: r.Title || '',
         address: r.Address?.Label || '',
-        city: r.Address?.Municipality || '',
-        region: r.Address?.Region || '',
-        country: r.Address?.Country || '',
+        city: r.Address?.Locality || '',
+        region: r.Address?.Region?.Name || '',
+        country: r.Address?.Country?.Name || '',
         latitude: r.Position?.[1] || 0,
         longitude: r.Position?.[0] || 0,
       },
@@ -139,9 +140,10 @@ router.post('/calculate-route', authenticate, async (req, res, next) => {
       LegGeometryFormat: 'Simple',
     });
 
-    // v2 response: { Legs: [{ Geometry: { LineString: [[lng,lat],...] }, TravelStepSummary, ... }], Summary: { Distance, Duration } }
-    const summary = response.Summary || {};
-    const legs = response.Legs || [];
+    // v2 response: { Routes: [{ Legs: [...], Summary: { Distance, Duration } }] }
+    const route = response.Routes?.[0] || {};
+    const summary = route.Summary || {};
+    const legs = route.Legs || [];
 
     const geometry = [];
     for (const leg of legs) {
