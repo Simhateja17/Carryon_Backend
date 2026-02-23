@@ -22,7 +22,8 @@ app.use('/api/users', require('./routes/user.routes'));
 app.use('/api/addresses', require('./routes/address.routes'));
 app.use('/api/bookings', require('./routes/booking.routes'));
 app.use('/api/vehicles', require('./routes/vehicle.routes'));
-console.log('[app] Routes mounted: /api/auth, /api/users, /api/addresses, /api/bookings, /api/vehicles');
+app.use('/api/location', require('./routes/location.routes'));
+console.log('[app] Routes mounted: /api/auth, /api/users, /api/addresses, /api/bookings, /api/vehicles, /api/location');
 
 // Error handling
 app.use(notFoundHandler);
