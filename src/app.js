@@ -12,6 +12,9 @@ app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
 
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 // Routes
 console.log('[app] Mounting routes...');
 app.use('/api/auth', require('./routes/auth.routes'));
