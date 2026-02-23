@@ -53,7 +53,7 @@ router.post('/send-otp', async (req, res, next) => {
     console.log(`[auth] OTP stored in DB for ${email}`);
 
     await resend.emails.send({
-      from: 'CarryOn <onboarding@resend.dev>',
+      from: 'CarryOn <noreply@withcouture.com>',
       to: email,
       subject: 'Your CarryOn verification code',
       html: `
