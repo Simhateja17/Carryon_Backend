@@ -1,0 +1,143 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ── Enums ──────────────────────────────────────────────
+
+enum AddressType {
+  HOME
+  OFFICE
+  OTHER
+}
+
+enum BookingStatus {
+  PENDING
+  SEARCHING_DRIVER
+  DRIVER_ASSIGNED
+  DRIVER_ARRIVED
+  PICKUP_DONE
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ── Models ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  name         String    @default("")
+  email        String    @unique
+  phone        String    @default("")
+  profileImage String?
+  isVerified   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  addresses Address[]
+  bookings  Booking[]
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  code      String
+  expiresAt DateTime
+}
+
+model Address {
+  id           String      @id @default(uuid())
+  userId       String
+  label        String      @default("")
+  address      String      @default("")
+  landmark     String      @default("")
+  latitude     Float       @default(0)
+  longitude    Float       @default(0)
+  contactName  String      @default("")
+  contactPhone String      @default("")
+  type         AddressType @default(OTHER)
+
+  user             User      @relation(fields: [userId], references: [id])
+  pickupBookings   Booking[] @relation("PickupAddress")
+  deliveryBookings Booking[] @relation("DeliveryAddress")
+}
+
+model Vehicle {
+  id          String  @id @default(uuid())
+  name        String
+  description String  @default("")
+  capacity    String  @default("")
+  basePrice   Float   @default(0)
+  pricePerKm  Float   @default(0)
+  iconName    String  @default("")
+  isAvailable Boolean @default(true)
+}
+
+model Driver {
+  id               String  @id @default(uuid())
+  name             String
+  phone            String  @default("")
+  photo            String?
+  rating           Float   @default(0)
+  totalTrips       Int     @default(0)
+  vehicleNumber    String  @default("")
+  vehicleModel     String  @default("")
+  currentLatitude  Float   @default(0)
+  currentLongitude Float   @default(0)
+
+  bookings Booking[]
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  userId            String
+  pickupAddressId   String
+  deliveryAddressId String
+  vehicleType       String        @default("")
+  scheduledTime     DateTime?
+  estimatedPrice    Float         @default(0)
+  finalPrice        Float         @default(0)
+  distance          Float         @default(0)
+  duration          Int           @default(0)
+  status            BookingStatus @default(PENDING)
+  paymentMethod     PaymentMethod @default(CASH)
+  paymentStatus     PaymentStatus @default(PENDING)
+  driverId          String?
+  otp               String        @default("")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user           User    @relation(fields: [userId], references: [id])
+  pickupAddress  Address @relation("PickupAddress", fields: [pickupAddressId], references: [id])
+  deliveryAddress Address @relation("DeliveryAddress", fields: [deliveryAddressId], references: [id])
+  driver         Driver? @relation(fields: [driverId], references: [id])
+  order          Order?
+}
+
+model Order {
+  id          String   @id @default(uuid())
+  bookingId   String   @unique
+  rating      Int?
+  review      String?
+  completedAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+}
