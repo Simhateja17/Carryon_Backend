@@ -121,6 +121,7 @@ model Booking {
   status            BookingStatus @default(PENDING)
   paymentMethod     PaymentMethod @default(CASH)
   paymentStatus     PaymentStatus @default(PENDING)
+  packageImageUrl   String?
   driverId          String?
   otp               String        @default("")
   createdAt         DateTime      @default(now())
