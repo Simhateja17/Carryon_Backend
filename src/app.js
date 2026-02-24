@@ -24,7 +24,13 @@ app.use('/api/bookings', require('./routes/booking.routes'));
 app.use('/api/vehicles', require('./routes/vehicle.routes'));
 app.use('/api/location', require('./routes/location.routes'));
 app.use('/api/upload', require('./routes/upload.routes'));
-console.log('[app] Routes mounted: /api/auth, /api/users, /api/addresses, /api/bookings, /api/vehicles, /api/location, /api/upload');
+app.use('/api/promo', require('./routes/promo.routes'));
+app.use('/api/chat', require('./routes/chat.routes'));
+app.use('/api/wallet', require('./routes/wallet.routes'));
+app.use('/api/support', require('./routes/support.routes'));
+app.use('/api/ratings', require('./routes/rating.routes'));
+app.use('/api/invoices', require('./routes/invoice.routes'));
+console.log('[app] All routes mounted');
 
 // Error handling
 app.use(notFoundHandler);

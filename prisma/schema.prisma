@@ -99,7 +99,7 @@ model User {
   profileImage String?
   language     String    @default("")
   isVerified   Boolean   @default(false)
-  referralCode String    @unique @default(uuid())
+  referralCode String?   @unique
   createdAt    DateTime  @default(now())
 
   addresses      Address[]
