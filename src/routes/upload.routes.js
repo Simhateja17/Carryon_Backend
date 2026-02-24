@@ -19,10 +19,16 @@ const upload = multer({
   },
 });
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+let _supabase;
+function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+  }
+  return _supabase;
+}
 
 // POST /api/upload/package-image
 router.post('/package-image', upload.single('image'), async (req, res, next) => {
@@ -34,7 +40,7 @@ router.post('/package-image', upload.single('image'), async (req, res, next) => 
     const ext = req.file.originalname.split('.').pop() || 'jpg';
     const fileName = `packages/${req.user.userId}/${Date.now()}.${ext}`;
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await getSupabase().storage
       .from('package-images')
       .upload(fileName, req.file.buffer, {
         contentType: req.file.mimetype,
@@ -46,7 +52,7 @@ router.post('/package-image', upload.single('image'), async (req, res, next) => 
       return next(new AppError('Failed to upload image', 500));
     }
 
-    const { data: urlData } = supabase.storage
+    const { data: urlData } = getSupabase().storage
       .from('package-images')
       .getPublicUrl(fileName);
 
