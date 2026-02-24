@@ -22,13 +22,14 @@ router.get('/me', async (req, res, next) => {
 // PUT /api/users/me
 router.put('/me', async (req, res, next) => {
   try {
-    const { name, phone, profileImage } = req.body;
+    const { name, phone, profileImage, language } = req.body;
     const user = await prisma.user.update({
       where: { id: req.user.userId },
       data: {
         ...(name !== undefined && { name }),
         ...(phone !== undefined && { phone }),
         ...(profileImage !== undefined && { profileImage }),
+        ...(language !== undefined && { language }),
       },
     });
     res.json({ success: true, data: user });

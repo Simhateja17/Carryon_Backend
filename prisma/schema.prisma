@@ -49,6 +49,7 @@ model User {
   email        String    @unique
   phone        String    @default("")
   profileImage String?
+  language     String    @default("")
   isVerified   Boolean   @default(false)
   createdAt    DateTime  @default(now())
 
