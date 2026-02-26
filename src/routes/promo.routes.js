@@ -143,9 +143,11 @@ router.get('/coupons', async (req, res, next) => {
 // GET /api/promo/referral - Get user's referral code & stats
 router.get('/referral', async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({
+    // referralCode is not in the JWT, so we still fetch it — but we no longer
+    // fetch name since it is already available in req.user from the token.
+    const userRecord = await prisma.user.findUnique({
       where: { id: req.user.userId },
-      select: { referralCode: true, name: true },
+      select: { referralCode: true },
     });
 
     const referrals = await prisma.referral.findMany({
@@ -159,7 +161,7 @@ router.get('/referral', async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        referralCode: user.referralCode,
+        referralCode: userRecord.referralCode,
         totalReferrals: referrals.length,
         completedReferrals: completedCount,
         totalEarned,
