@@ -19,34 +19,61 @@ function generateDeliveryOtp() {
 // POST /api/bookings
 router.post('/', async (req, res, next) => {
   try {
-    const { pickupAddressId, deliveryAddressId, vehicleType, scheduledTime, estimatedPrice, distance, duration, paymentMethod } = req.body;
+    const {
+      pickupAddress, deliveryAddress,
+      vehicleType, scheduledTime, estimatedPrice,
+      distance, duration, paymentMethod,
+      senderName, senderPhone, receiverName, receiverPhone, notes
+    } = req.body;
 
-    const [pickup, delivery] = await Promise.all([
-      prisma.address.findUnique({ where: { id: pickupAddressId } }),
-      prisma.address.findUnique({ where: { id: deliveryAddressId } }),
-    ]);
-
-    if (!pickup || pickup.userId !== req.user.userId) {
-      return next(new AppError('Invalid pickup address', 400));
-    }
-    if (!delivery || delivery.userId !== req.user.userId) {
-      return next(new AppError('Invalid delivery address', 400));
+    if (!pickupAddress || !deliveryAddress) {
+      return next(new AppError('pickupAddress and deliveryAddress are required', 400));
     }
 
-    const booking = await prisma.booking.create({
-      data: {
-        userId: req.user.userId,
-        pickupAddressId,
-        deliveryAddressId,
-        vehicleType: vehicleType || '',
-        scheduledTime: scheduledTime ? new Date(scheduledTime) : null,
-        estimatedPrice: estimatedPrice || 0,
-        distance: distance || 0,
-        duration: duration || 0,
-        paymentMethod: paymentMethod || 'CASH',
-        otp: generateDeliveryOtp(),
-      },
-      include: bookingIncludes,
+    const booking = await prisma.$transaction(async (tx) => {
+      const pickup = await tx.address.create({
+        data: {
+          userId: req.user.userId,
+          address: pickupAddress.address || '',
+          latitude: pickupAddress.latitude || 0,
+          longitude: pickupAddress.longitude || 0,
+          contactName: pickupAddress.contactName || senderName || '',
+          contactPhone: pickupAddress.contactPhone || senderPhone || '',
+          landmark: pickupAddress.landmark || '',
+          label: '',
+          type: 'OTHER',
+        },
+      });
+
+      const delivery = await tx.address.create({
+        data: {
+          userId: req.user.userId,
+          address: deliveryAddress.address || '',
+          latitude: deliveryAddress.latitude || 0,
+          longitude: deliveryAddress.longitude || 0,
+          contactName: deliveryAddress.contactName || receiverName || '',
+          contactPhone: deliveryAddress.contactPhone || receiverPhone || '',
+          landmark: deliveryAddress.landmark || '',
+          label: '',
+          type: 'OTHER',
+        },
+      });
+
+      return tx.booking.create({
+        data: {
+          userId: req.user.userId,
+          pickupAddressId: pickup.id,
+          deliveryAddressId: delivery.id,
+          vehicleType: vehicleType || '',
+          scheduledTime: scheduledTime ? new Date(scheduledTime) : null,
+          estimatedPrice: estimatedPrice || 0,
+          distance: distance || 0,
+          duration: duration || 0,
+          paymentMethod: paymentMethod || 'CASH',
+          otp: generateDeliveryOtp(),
+        },
+        include: bookingIncludes,
+      });
     });
 
     res.status(201).json({ success: true, data: booking });
