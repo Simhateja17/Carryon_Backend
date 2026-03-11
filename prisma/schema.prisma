@@ -66,6 +66,67 @@ enum TransactionType {
   WITHDRAWAL
 }
 
+enum DriverVerificationStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  INSURANCE
+  PROFILE_PHOTO
+  ID_PROOF
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DriverVehicleType {
+  BIKE
+  CAR
+  VAN
+  TRUCK
+}
+
+enum DriverTransactionType {
+  DELIVERY_EARNING
+  BONUS
+  TIP
+  WITHDRAWAL
+  INCENTIVE
+  ADJUSTMENT
+}
+
+enum DriverTransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum DriverNotificationType {
+  JOB_REQUEST
+  JOB_UPDATE
+  PAYMENT
+  PROMO
+  SYSTEM
+  ALERT
+}
+
+enum DriverTicketCategory {
+  PAYMENT
+  DELIVERY
+  APP_BUG
+  ACCOUNT
+  VEHICLE
+  GENERAL
+}
+
 enum TicketCategory {
   DELIVERY_ISSUE
   PAYMENT_ISSUE
@@ -148,18 +209,130 @@ model Vehicle {
 }
 
 model Driver {
-  id               String  @id @default(uuid())
-  name             String
-  phone            String  @default("")
-  photo            String?
-  rating           Float   @default(0)
-  totalTrips       Int     @default(0)
-  vehicleNumber    String  @default("")
-  vehicleModel     String  @default("")
-  currentLatitude  Float   @default(0)
-  currentLongitude Float   @default(0)
+  id                 String                   @id @default(uuid())
+  name               String
+  email              String                   @unique @default("")
+  phone              String                   @default("")
+  photo              String?
+  rating             Float                    @default(0)
+  totalTrips         Int                      @default(0)
+  vehicleNumber      String                   @default("")
+  vehicleModel       String                   @default("")
+  currentLatitude    Float                    @default(0)
+  currentLongitude   Float                    @default(0)
+  isOnline           Boolean                  @default(false)
+  isVerified         Boolean                  @default(false)
+  verificationStatus DriverVerificationStatus @default(PENDING)
+  emergencyContact   String                   @default("")
+  createdAt          DateTime                 @default(now())
 
-  bookings Booking[]
+  bookings      Booking[]
+  documents     DriverDocument[]
+  vehicle       DriverVehicle?
+  wallet        DriverWallet?
+  notifications DriverNotification[]
+  supportTickets DriverSupportTicket[]
+}
+
+model DriverDocument {
+  id              String         @id @default(uuid())
+  driverId        String
+  type            DocumentType
+  imageUrl        String
+  status          DocumentStatus @default(PENDING)
+  rejectionReason String?
+  uploadedAt      DateTime       @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@unique([driverId, type])
+}
+
+model DriverVehicle {
+  id           String            @id @default(uuid())
+  driverId     String            @unique
+  type         DriverVehicleType @default(CAR)
+  make         String            @default("")
+  model        String            @default("")
+  year         Int               @default(0)
+  licensePlate String            @default("")
+  color        String            @default("")
+  createdAt    DateTime          @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model DriverWallet {
+  id               String   @id @default(uuid())
+  driverId         String   @unique
+  balance          Float    @default(0)
+  pendingAmount    Float    @default(0)
+  lifetimeEarnings Float    @default(0)
+  createdAt        DateTime @default(now())
+
+  driver       Driver                   @relation(fields: [driverId], references: [id])
+  transactions DriverWalletTransaction[]
+}
+
+model DriverWalletTransaction {
+  id          String                  @id @default(uuid())
+  walletId    String
+  type        DriverTransactionType
+  amount      Float
+  description String                  @default("")
+  jobId       String?
+  status      DriverTransactionStatus @default(COMPLETED)
+  createdAt   DateTime                @default(now())
+
+  wallet DriverWallet @relation(fields: [walletId], references: [id])
+}
+
+model DriverNotification {
+  id         String                 @id @default(uuid())
+  driverId   String
+  title      String
+  message    String
+  type       DriverNotificationType @default(SYSTEM)
+  isRead     Boolean                @default(false)
+  actionData String?
+  createdAt  DateTime               @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model DriverSupportTicket {
+  id          String               @id @default(uuid())
+  driverId    String
+  subject     String
+  category    DriverTicketCategory @default(GENERAL)
+  description String               @default("")
+  status      TicketStatus         @default(OPEN)
+  priority    TicketPriority       @default(MEDIUM)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  driver   Driver               @relation(fields: [driverId], references: [id])
+  messages DriverTicketMessage[]
+}
+
+model DriverTicketMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  senderId  String
+  isStaff   Boolean  @default(false)
+  message   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  ticket DriverSupportTicket @relation(fields: [ticketId], references: [id])
+}
+
+model HelpArticle {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  category  String   @default("")
+  createdAt DateTime @default(now())
 }
 
 model Booking {

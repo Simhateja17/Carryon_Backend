@@ -7,7 +7,7 @@ const { AppError } = require('./errorHandler');
 const client = jwksClient({
   jwksUri: `${process.env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`,
   cache: true,
-  cacheMaxAge: 600000, // 10 minutes
+  cacheMaxAge: 600000,
 });
 
 function getKey(header, callback) {
@@ -26,8 +26,7 @@ function verifyToken(token) {
   });
 }
 
-// Verifies Supabase JWT and resolves Prisma User record
-async function authenticate(req, res, next) {
+async function authenticateDriver(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return next(new AppError('Authentication required', 401));
@@ -38,42 +37,29 @@ async function authenticate(req, res, next) {
     const decoded = await verifyToken(token);
     const email = decoded.email;
 
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return next(new AppError('User not found. Please sync your account first.', 401));
+    const driver = await prisma.driver.findUnique({ where: { email } });
+    if (!driver) {
+      req.driver = null;
+      req.driverEmail = email;
+      req.supabaseId = decoded.sub;
+      return next();
     }
 
-    req.user = {
-      userId: user.id,
-      supabaseId: decoded.sub,
-      email: user.email,
-      name: user.name,
-      phone: user.phone,
-    };
+    req.driver = driver;
+    req.driverEmail = email;
+    req.supabaseId = decoded.sub;
     next();
   } catch {
     next(new AppError('Invalid or expired token', 401));
   }
 }
 
-// Lightweight version that only verifies JWT without DB lookup
-async function authenticateToken(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    return next(new AppError('Authentication required', 401));
+// Strict version — requires driver record to exist
+function requireDriver(req, res, next) {
+  if (!req.driver) {
+    return next(new AppError('Driver profile not found. Please register first.', 401));
   }
-
-  try {
-    const token = header.split(' ')[1];
-    const decoded = await verifyToken(token);
-    req.user = {
-      supabaseId: decoded.sub,
-      email: decoded.email,
-    };
-    next();
-  } catch {
-    next(new AppError('Invalid or expired token', 401));
-  }
+  next();
 }
 
-module.exports = { authenticate, authenticateToken };
+module.exports = { authenticateDriver, requireDriver };

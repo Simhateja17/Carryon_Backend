@@ -30,6 +30,18 @@ app.use('/api/wallet', require('./routes/wallet.routes'));
 app.use('/api/support', require('./routes/support.routes'));
 app.use('/api/ratings', require('./routes/rating.routes'));
 app.use('/api/invoices', require('./routes/invoice.routes'));
+
+// Driver routes
+app.use('/api/driver/auth', require('./routes/driver-auth.routes'));
+app.use('/api/driver/profile', require('./routes/driver-profile.routes'));
+app.use('/api/driver/documents', require('./routes/driver-documents.routes'));
+app.use('/api/driver/vehicle', require('./routes/driver-vehicle.routes'));
+app.use('/api/driver/jobs', require('./routes/driver-jobs.routes'));
+app.use('/api/driver/earnings', require('./routes/driver-earnings.routes'));
+app.use('/api/driver/ratings', require('./routes/driver-ratings.routes'));
+app.use('/api/driver/support', require('./routes/driver-support.routes'));
+app.use('/api/driver/notifications', require('./routes/driver-notifications.routes'));
+app.use('/api/driver/chat', require('./routes/driver-chat.routes'));
 console.log('[app] All routes mounted');
 
 // Error handling
