@@ -29,40 +29,59 @@ function getSupabase() {
 }
 
 // POST /api/driver/documents — upload a document
+// Supports two modes:
+// 1. Multipart form upload (image file + type) - backend uploads to Supabase
+// 2. JSON body with imageUrl + type - image already uploaded to Supabase from mobile app
 router.post('/', upload.single('image'), async (req, res, next) => {
   try {
-    if (!req.file) return next(new AppError('No image file provided', 400));
-    const { type } = req.body;
-    if (!type) return next(new AppError('Document type is required', 400));
+    let imageUrl;
+    let type;
+
+    // Check if this is a JSON request (image already uploaded to Supabase)
+    if (req.is('application/json') || (!req.file && req.body.imageUrl)) {
+      // Mode 2: JSON body with imageUrl
+      type = req.body.type;
+      imageUrl = req.body.imageUrl;
+
+      if (!imageUrl) return next(new AppError('imageUrl is required', 400));
+      if (!type) return next(new AppError('Document type is required', 400));
+    } else {
+      // Mode 1: Multipart form upload
+      if (!req.file) return next(new AppError('No image file provided', 400));
+      type = req.body.type;
+      if (!type) return next(new AppError('Document type is required', 400));
+
+      const ext = req.file.originalname.split('.').pop() || 'jpg';
+      const fileName = `driver-documents/${req.driver.id}/${type}_${Date.now()}.${ext}`;
+
+      const { error } = await getSupabase().storage
+        .from('driver-documents')
+        .upload(fileName, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: true,
+        });
+
+      if (error) {
+        console.error('Supabase upload error:', error);
+        return next(new AppError('Failed to upload document', 500));
+      }
+
+      const { data: urlData } = getSupabase().storage
+        .from('driver-documents')
+        .getPublicUrl(fileName);
+      
+      imageUrl = urlData.publicUrl;
+    }
 
     const validTypes = ['DRIVERS_LICENSE', 'VEHICLE_REGISTRATION', 'INSURANCE', 'PROFILE_PHOTO', 'ID_PROOF'];
     if (!validTypes.includes(type)) {
       return next(new AppError('Invalid document type', 400));
     }
 
-    const ext = req.file.originalname.split('.').pop() || 'jpg';
-    const fileName = `driver-documents/${req.driver.id}/${type}_${Date.now()}.${ext}`;
-
-    const { error } = await getSupabase().storage
-      .from('driver-documents')
-      .upload(fileName, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: true,
-      });
-
-    if (error) {
-      console.error('Supabase upload error:', error);
-      return next(new AppError('Failed to upload document', 500));
-    }
-
-    const { data: urlData } = getSupabase().storage
-      .from('driver-documents')
-      .getPublicUrl(fileName);
-
     const document = await prisma.driverDocument.upsert({
       where: { driverId_type: { driverId: req.driver.id, type } },
-      update: { imageUrl: urlData.publicUrl, status: 'PENDING', rejectionReason: null },
-      create: { driverId: req.driver.id, type, imageUrl: urlData.publicUrl },
+      update: { imageUrl: imageUrl, status: 'PENDING', rejectionReason: null },
+      create: { driverId: req.driver.id, type, imageUrl: imageUrl },
     });
 
     res.status(201).json({ success: true, data: document });
