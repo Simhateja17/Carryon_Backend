@@ -42,6 +42,9 @@ app.use('/api/driver/ratings', require('./routes/driver-ratings.routes'));
 app.use('/api/driver/support', require('./routes/driver-support.routes'));
 app.use('/api/driver/notifications', require('./routes/driver-notifications.routes'));
 app.use('/api/driver/chat', require('./routes/driver-chat.routes'));
+
+// Admin routes
+app.use('/api/admin/notifications', require('./routes/admin-notifications.routes'));
 console.log('[app] All routes mounted');
 
 // Error handling

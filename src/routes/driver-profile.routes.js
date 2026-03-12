@@ -73,6 +73,23 @@ router.post('/location', async (req, res, next) => {
   }
 });
 
+// PUT /api/driver/profile/fcm-token — register FCM push token
+router.put('/fcm-token', async (req, res, next) => {
+  try {
+    const { fcmToken } = req.body;
+    if (!fcmToken) {
+      return next(new AppError('fcmToken is required', 400));
+    }
+    await prisma.driver.update({
+      where: { id: req.driver.id },
+      data: { fcmToken },
+    });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/driver/profile/verification-status
 router.get('/verification-status', async (req, res, next) => {
   try {

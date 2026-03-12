@@ -224,6 +224,7 @@ model Driver {
   isVerified         Boolean                  @default(false)
   verificationStatus DriverVerificationStatus @default(PENDING)
   emergencyContact   String                   @default("")
+  fcmToken           String?
   createdAt          DateTime                 @default(now())
 
   bookings      Booking[]
