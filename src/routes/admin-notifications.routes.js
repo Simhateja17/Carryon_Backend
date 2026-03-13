@@ -51,7 +51,7 @@ router.post('/send', async (req, res, next) => {
 
     const drivers = await prisma.driver.findMany({
       where: whereClause,
-      select: { id: true, name: true, fcmToken: true },
+      select: { id: true, name: true, email: true, fcmToken: true },
     });
 
     if (drivers.length === 0) {
@@ -69,9 +69,9 @@ router.post('/send', async (req, res, next) => {
     });
 
     // Send actual FCM push notifications to drivers who have tokens
-    const fcmTokens = drivers
-      .map((d) => d.fcmToken)
-      .filter((token) => token != null && token.length > 0);
+    const driversWithToken = drivers.filter((d) => d.fcmToken != null && d.fcmToken.length > 0);
+    const driversWithoutToken = drivers.filter((d) => !d.fcmToken || d.fcmToken.length === 0);
+    const fcmTokens = driversWithToken.map((d) => d.fcmToken);
 
     let pushResult = { successCount: 0, failureCount: 0, failedTokens: [] };
     if (fcmTokens.length > 0) {
@@ -81,6 +81,16 @@ router.post('/send', async (req, res, next) => {
         { type, source: 'admin' }
       );
     }
+
+    const failedTokenSet = new Set(pushResult.failedTokens);
+    const deliveredDrivers = driversWithToken
+      .filter((d) => !failedTokenSet.has(d.fcmToken))
+      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
+    const failedDrivers = driversWithToken
+      .filter((d) => failedTokenSet.has(d.fcmToken))
+      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
+    const noTokenDrivers = driversWithoutToken
+      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
 
     res.json({
       success: true,
@@ -92,7 +102,10 @@ router.post('/send', async (req, res, next) => {
           attempted: fcmTokens.length,
           delivered: pushResult.successCount,
           failed: pushResult.failureCount,
-          driversWithoutToken: drivers.length - fcmTokens.length,
+          driversWithoutToken: driversWithoutToken.length,
+          deliveredDrivers,
+          failedDrivers,
+          noTokenDrivers,
         },
       },
     });
