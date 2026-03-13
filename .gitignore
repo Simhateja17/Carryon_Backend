@@ -7,6 +7,10 @@ node_modules/
 .env.development
 .env.production
 
+# Firebase service account (sensitive)
+service-account.json
+*-firebase-adminsdk-*.json
+
 # Prisma
 prisma/migrations/*/
 

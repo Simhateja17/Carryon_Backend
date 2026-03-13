@@ -4,6 +4,9 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
+// Initialize Firebase Admin SDK early
+require('./lib/firebase');
+
 const app = express();
 
 // Middleware
@@ -45,6 +48,7 @@ app.use('/api/driver/chat', require('./routes/driver-chat.routes'));
 
 // Admin routes
 app.use('/api/admin/notifications', require('./routes/admin-notifications.routes'));
+app.use('/api/admin/drivers', require('./routes/admin-drivers.routes'));
 console.log('[app] All routes mounted');
 
 // Error handling

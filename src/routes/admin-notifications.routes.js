@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
+const { sendPushNotifications } = require('../lib/firebase');
 
 const router = Router();
 
@@ -42,7 +43,7 @@ router.post('/send', async (req, res, next) => {
       return next(new AppError(`Invalid type. Must be one of: ${validTypes.join(', ')}`, 400));
     }
 
-    // Determine target drivers
+    // Determine target drivers — also fetch fcmToken for push delivery
     let whereClause = {};
     if (audience === 'online') {
       whereClause = { isOnline: true };
@@ -50,14 +51,14 @@ router.post('/send', async (req, res, next) => {
 
     const drivers = await prisma.driver.findMany({
       where: whereClause,
-      select: { id: true, name: true },
+      select: { id: true, name: true, fcmToken: true },
     });
 
     if (drivers.length === 0) {
       return res.json({ success: true, data: { sent: 0, message: 'No matching drivers found' } });
     }
 
-    // Insert a notification for each driver
+    // Insert a notification record for each driver
     const notifications = await prisma.driverNotification.createMany({
       data: drivers.map((driver) => ({
         driverId: driver.id,
@@ -67,12 +68,32 @@ router.post('/send', async (req, res, next) => {
       })),
     });
 
+    // Send actual FCM push notifications to drivers who have tokens
+    const fcmTokens = drivers
+      .map((d) => d.fcmToken)
+      .filter((token) => token != null && token.length > 0);
+
+    let pushResult = { successCount: 0, failureCount: 0, failedTokens: [] };
+    if (fcmTokens.length > 0) {
+      pushResult = await sendPushNotifications(
+        fcmTokens,
+        { title, body: message },
+        { type, source: 'admin' }
+      );
+    }
+
     res.json({
       success: true,
       data: {
         sent: notifications.count,
         audience,
         driversCount: drivers.length,
+        push: {
+          attempted: fcmTokens.length,
+          delivered: pushResult.successCount,
+          failed: pushResult.failureCount,
+          driversWithoutToken: drivers.length - fcmTokens.length,
+        },
       },
     });
   } catch (err) {
