@@ -1,0 +1,519 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ── Enums ──────────────────────────────────────────────
+
+enum AddressType {
+  HOME
+  OFFICE
+  OTHER
+}
+
+enum BookingStatus {
+  PENDING
+  SEARCHING_DRIVER
+  DRIVER_ASSIGNED
+  DRIVER_ARRIVED
+  PICKUP_DONE
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
+
+enum ReferralStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+enum SenderType {
+  USER
+  DRIVER
+}
+
+enum TransactionType {
+  TOP_UP
+  PAYMENT
+  REFUND
+  CASHBACK
+  REFERRAL_BONUS
+  WITHDRAWAL
+}
+
+enum DriverVerificationStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  INSURANCE
+  PROFILE_PHOTO
+  ID_PROOF
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DriverVehicleType {
+  BIKE
+  CAR
+  VAN
+  TRUCK
+}
+
+enum DriverTransactionType {
+  DELIVERY_EARNING
+  BONUS
+  TIP
+  WITHDRAWAL
+  INCENTIVE
+  ADJUSTMENT
+}
+
+enum DriverTransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum DriverNotificationType {
+  JOB_REQUEST
+  JOB_UPDATE
+  PAYMENT
+  PROMO
+  SYSTEM
+  ALERT
+}
+
+enum DriverTicketCategory {
+  PAYMENT
+  DELIVERY
+  APP_BUG
+  ACCOUNT
+  VEHICLE
+  GENERAL
+}
+
+enum TicketCategory {
+  DELIVERY_ISSUE
+  PAYMENT_ISSUE
+  DRIVER_COMPLAINT
+  APP_BUG
+  REFUND_REQUEST
+  OTHER
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// ── Models ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  name         String    @default("")
+  email        String    @unique
+  phone        String    @default("")
+  profileImage String?
+  language     String    @default("")
+  isVerified   Boolean   @default(false)
+  referralCode String?   @unique
+  createdAt    DateTime  @default(now())
+
+  addresses      Address[]
+  bookings       Booking[]
+  wallet         Wallet?
+  userCoupons    UserCoupon[]
+  referralsMade  Referral[]      @relation("Referrer")
+  referralsUsed  Referral[]      @relation("Referee")
+  supportTickets SupportTicket[]
+  invoices       Invoice[]
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  code      String
+  expiresAt DateTime
+}
+
+model Address {
+  id           String      @id @default(uuid())
+  userId       String
+  label        String      @default("")
+  address      String      @default("")
+  landmark     String      @default("")
+  latitude     Float       @default(0)
+  longitude    Float       @default(0)
+  contactName  String      @default("")
+  contactPhone String      @default("")
+  type         AddressType @default(OTHER)
+
+  user             User      @relation(fields: [userId], references: [id])
+  pickupBookings   Booking[] @relation("PickupAddress")
+  deliveryBookings Booking[] @relation("DeliveryAddress")
+}
+
+model Vehicle {
+  id          String  @id @default(uuid())
+  name        String
+  description String  @default("")
+  capacity    String  @default("")
+  basePrice   Float   @default(0)
+  pricePerKm  Float   @default(0)
+  iconName    String  @default("")
+  isAvailable Boolean @default(true)
+}
+
+model Driver {
+  id                 String                   @id @default(uuid())
+  name               String
+  email              String                   @unique @default("")
+  phone              String                   @default("")
+  photo              String?
+  rating             Float                    @default(0)
+  totalTrips         Int                      @default(0)
+  vehicleNumber      String                   @default("")
+  vehicleModel       String                   @default("")
+  currentLatitude    Float                    @default(0)
+  currentLongitude   Float                    @default(0)
+  isOnline           Boolean                  @default(false)
+  isVerified         Boolean                  @default(false)
+  verificationStatus DriverVerificationStatus @default(PENDING)
+  emergencyContact   String                   @default("")
+  fcmToken           String?
+  createdAt          DateTime                 @default(now())
+
+  bookings      Booking[]
+  documents     DriverDocument[]
+  vehicle       DriverVehicle?
+  wallet        DriverWallet?
+  notifications DriverNotification[]
+  supportTickets DriverSupportTicket[]
+}
+
+model DriverDocument {
+  id              String         @id @default(uuid())
+  driverId        String
+  type            DocumentType
+  imageUrl        String
+  status          DocumentStatus @default(PENDING)
+  rejectionReason String?
+  uploadedAt      DateTime       @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@unique([driverId, type])
+}
+
+model DriverVehicle {
+  id           String            @id @default(uuid())
+  driverId     String            @unique
+  type         DriverVehicleType @default(CAR)
+  make         String            @default("")
+  model        String            @default("")
+  year         Int               @default(0)
+  licensePlate String            @default("")
+  color        String            @default("")
+  createdAt    DateTime          @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model DriverWallet {
+  id               String   @id @default(uuid())
+  driverId         String   @unique
+  balance          Float    @default(0)
+  pendingAmount    Float    @default(0)
+  lifetimeEarnings Float    @default(0)
+  createdAt        DateTime @default(now())
+
+  driver       Driver                   @relation(fields: [driverId], references: [id])
+  transactions DriverWalletTransaction[]
+}
+
+model DriverWalletTransaction {
+  id          String                  @id @default(uuid())
+  walletId    String
+  type        DriverTransactionType
+  amount      Float
+  description String                  @default("")
+  jobId       String?
+  status      DriverTransactionStatus @default(COMPLETED)
+  createdAt   DateTime                @default(now())
+
+  wallet DriverWallet @relation(fields: [walletId], references: [id])
+}
+
+model DriverNotification {
+  id         String                 @id @default(uuid())
+  driverId   String
+  title      String
+  message    String
+  type       DriverNotificationType @default(SYSTEM)
+  isRead     Boolean                @default(false)
+  actionData String?
+  createdAt  DateTime               @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model DriverSupportTicket {
+  id          String               @id @default(uuid())
+  driverId    String
+  subject     String
+  category    DriverTicketCategory @default(GENERAL)
+  description String               @default("")
+  status      TicketStatus         @default(OPEN)
+  priority    TicketPriority       @default(MEDIUM)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  driver   Driver               @relation(fields: [driverId], references: [id])
+  messages DriverTicketMessage[]
+}
+
+model DriverTicketMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  senderId  String
+  isStaff   Boolean  @default(false)
+  message   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  ticket DriverSupportTicket @relation(fields: [ticketId], references: [id])
+}
+
+model HelpArticle {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  category  String   @default("")
+  createdAt DateTime @default(now())
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  userId            String
+  pickupAddressId   String
+  deliveryAddressId String
+  vehicleType       String        @default("")
+  scheduledTime     DateTime?
+  estimatedPrice    Float         @default(0)
+  finalPrice        Float         @default(0)
+  distance          Float         @default(0)
+  duration          Int           @default(0)
+  status            BookingStatus @default(PENDING)
+  paymentMethod     PaymentMethod @default(CASH)
+  paymentStatus     PaymentStatus @default(PENDING)
+  packageImageUrl   String?
+  driverId          String?
+  otp               String        @default("")
+  promoCode         String?
+  discountAmount    Float         @default(0)
+  deliveryProofUrl  String?
+  deliveredAt       DateTime?
+  eta               Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user            User           @relation(fields: [userId], references: [id])
+  pickupAddress   Address        @relation("PickupAddress", fields: [pickupAddressId], references: [id])
+  deliveryAddress Address        @relation("DeliveryAddress", fields: [deliveryAddressId], references: [id])
+  driver          Driver?        @relation(fields: [driverId], references: [id])
+  order           Order?
+  chatMessages    ChatMessage[]
+  userCoupons     UserCoupon[]
+  supportTickets  SupportTicket[]
+  invoice         Invoice?
+}
+
+model Order {
+  id          String   @id @default(uuid())
+  bookingId   String   @unique
+  rating      Int?
+  review      String?
+  tags        String[] @default([])
+  tipAmount   Float    @default(0)
+  completedAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+}
+
+// ── Promo Codes & Referral ──────────────────────────────
+
+model Coupon {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  description   String       @default("")
+  discountType  DiscountType @default(PERCENTAGE)
+  discountValue Float        @default(0)
+  maxDiscount   Float?
+  minOrderValue Float        @default(0)
+  usageLimit    Int          @default(100)
+  usedCount     Int          @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+
+  userCoupons UserCoupon[]
+}
+
+model UserCoupon {
+  id        String    @id @default(uuid())
+  userId    String
+  couponId  String
+  bookingId String?
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user    User     @relation(fields: [userId], references: [id])
+  coupon  Coupon   @relation(fields: [couponId], references: [id])
+  booking Booking? @relation(fields: [bookingId], references: [id])
+
+  @@unique([userId, couponId])
+}
+
+model Referral {
+  id           String         @id @default(uuid())
+  referrerId   String
+  refereeId    String?
+  referralCode String
+  rewardAmount Float          @default(5.0)
+  status       ReferralStatus @default(PENDING)
+  createdAt    DateTime       @default(now())
+
+  referrer User  @relation("Referrer", fields: [referrerId], references: [id])
+  referee  User? @relation("Referee", fields: [refereeId], references: [id])
+}
+
+// ── In-App Chat ─────────────────────────────────────────
+
+model ChatMessage {
+  id         String     @id @default(uuid())
+  bookingId  String
+  senderId   String
+  senderType SenderType @default(USER)
+  message    String     @default("")
+  imageUrl   String?
+  isRead     Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+}
+
+// ── Wallet ──────────────────────────────────────────────
+
+model Wallet {
+  id      String @id @default(uuid())
+  userId  String @unique
+  balance Float  @default(0)
+
+  user         User                @relation(fields: [userId], references: [id])
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String          @id @default(uuid())
+  walletId    String
+  type        TransactionType
+  amount      Float
+  description String          @default("")
+  referenceId String?
+  createdAt   DateTime        @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+}
+
+// ── Support Tickets ─────────────────────────────────────
+
+model SupportTicket {
+  id        String         @id @default(uuid())
+  userId    String
+  bookingId String?
+  subject   String
+  category  TicketCategory @default(OTHER)
+  status    TicketStatus   @default(OPEN)
+  priority  TicketPriority @default(MEDIUM)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id])
+  booking  Booking?        @relation(fields: [bookingId], references: [id])
+  messages TicketMessage[]
+}
+
+model TicketMessage {
+  id        String   @id @default(uuid())
+  ticketId  String
+  senderId  String
+  isStaff   Boolean  @default(false)
+  message   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+}
+
+// ── Invoice ─────────────────────────────────────────────
+
+model Invoice {
+  id            String   @id @default(uuid())
+  bookingId     String   @unique
+  userId        String
+  invoiceNumber String   @unique
+  subtotal      Float    @default(0)
+  tax           Float    @default(0)
+  discount      Float    @default(0)
+  total         Float    @default(0)
+  taxRate       Float    @default(0.06)
+  currency      String   @default("MYR")
+  issuedAt      DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+}
