@@ -43,10 +43,13 @@ router.post('/send-otp', async (req, res, next) => {
     }
 
     // Send OTP via Supabase Auth
+    // Always allow Supabase to create the auth user if it doesn't exist — the Prisma
+    // mode guard above already enforces login/signup logic. Without this, Supabase
+    // silently skips sending the OTP when the user exists in Prisma but not in Supabase Auth.
     const { error } = await getSupabaseAdmin().auth.signInWithOtp({
       email,
       options: {
-        shouldCreateUser: mode === 'signup',
+        shouldCreateUser: true,
       },
     });
 
