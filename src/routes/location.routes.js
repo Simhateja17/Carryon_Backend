@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
+const prisma = require('../lib/prisma');
 
 const router = express.Router();
 
@@ -182,16 +183,24 @@ router.get('/map-config', authenticate, async (req, res) => {
 
 // POST /api/location/update-position
 // Body: { deviceId, latitude, longitude }
-// Note: Tracker is a v1 resource — keeping as-is if a tracker is configured.
-// For apps without a tracker, this is a no-op stub.
+// Persists the driver's position to the database
 router.post('/update-position', authenticate, async (req, res, next) => {
   try {
-    console.log(`[location] POST /update-position — deviceId="${req.body.deviceId}" lat=${req.body.latitude} lng=${req.body.longitude}`);
     const { deviceId, latitude, longitude } = req.body;
     if (!deviceId || latitude == null || longitude == null) {
       return res.status(400).json({ success: false, message: 'deviceId, latitude, longitude are required' });
     }
-    // In production, persist to your own DB or use AWS Tracker if configured
+
+    // Try to update driver position in DB
+    try {
+      await prisma.driver.update({
+        where: { id: deviceId },
+        data: { currentLatitude: latitude, currentLongitude: longitude },
+      });
+    } catch (_) {
+      // deviceId may not be a driver — ignore
+    }
+
     res.json({ success: true, message: 'Position updated' });
   } catch (err) {
     next(err);
@@ -199,18 +208,23 @@ router.post('/update-position', authenticate, async (req, res, next) => {
 });
 
 // GET /api/location/get-position/:deviceId
+// Returns the driver's last known position from the database
 router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
   try {
-    console.log(`[location] GET /get-position — deviceId="${req.params.deviceId}"`);
     const { deviceId } = req.params;
-    // Stub — in production, read from your DB or tracker
+
+    const driver = await prisma.driver.findUnique({
+      where: { id: deviceId },
+      select: { currentLatitude: true, currentLongitude: true, updatedAt: true },
+    });
+
     res.json({
       success: true,
       data: {
         deviceId,
-        latitude: 0,
-        longitude: 0,
-        timestamp: '',
+        latitude: driver?.currentLatitude ?? 0,
+        longitude: driver?.currentLongitude ?? 0,
+        timestamp: driver?.updatedAt?.toISOString() ?? '',
       },
     });
   } catch (err) {
