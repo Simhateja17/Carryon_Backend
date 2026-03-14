@@ -249,6 +249,34 @@ router.put('/:id/status', async (req, res, next) => {
   }
 });
 
+// POST /api/driver/jobs/:id/verify-pickup-otp — verify OTP at pickup
+router.post('/:id/verify-pickup-otp', async (req, res, next) => {
+  try {
+    const { otp } = req.body;
+    if (!otp) return next(new AppError('OTP is required', 400));
+
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    if (!booking) return next(new AppError('Job not found', 404));
+    if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+    if (booking.status !== 'DRIVER_ARRIVED') {
+      return next(new AppError('OTP verification is only allowed when driver has arrived at pickup', 400));
+    }
+    if (booking.otp !== otp) {
+      return next(new AppError('Invalid OTP', 400));
+    }
+
+    const updated = await prisma.booking.update({
+      where: { id: req.params.id },
+      data: { status: 'PICKUP_DONE' },
+      include: bookingInclude,
+    });
+
+    res.json({ success: true, data: toDeliveryJob(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/driver/jobs/:id/proof — proof of delivery
 router.post('/:id/proof', async (req, res, next) => {
   try {
