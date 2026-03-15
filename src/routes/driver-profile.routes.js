@@ -46,10 +46,12 @@ router.post('/toggle-online', async (req, res, next) => {
     if (typeof isOnline !== 'boolean') {
       return next(new AppError('isOnline must be a boolean', 400));
     }
+    console.log('[driver-profile] POST toggle-online — driverId:', req.driver.id, 'isOnline →', isOnline);
     const driver = await prisma.driver.update({
       where: { id: req.driver.id },
       data: { isOnline },
     });
+    console.log('[driver-profile] toggle-online — driverId:', req.driver.id, 'isOnline now:', driver.isOnline);
     res.json({ success: true, data: { isOnline: driver.isOnline } });
   } catch (err) {
     next(err);
@@ -63,6 +65,7 @@ router.post('/location', async (req, res, next) => {
     if (latitude == null || longitude == null) {
       return next(new AppError('latitude and longitude are required', 400));
     }
+    console.log('[driver-profile] POST location — driverId:', req.driver.id, 'lat:', latitude, 'lng:', longitude);
     await prisma.driver.update({
       where: { id: req.driver.id },
       data: { currentLatitude: latitude, currentLongitude: longitude },
@@ -80,10 +83,12 @@ router.put('/fcm-token', async (req, res, next) => {
     if (!fcmToken) {
       return next(new AppError('fcmToken is required', 400));
     }
+    console.log('[driver-profile] PUT fcm-token — driverId:', req.driver.id, 'token:', fcmToken.slice(0, 10) + '...');
     await prisma.driver.update({
       where: { id: req.driver.id },
       data: { fcmToken },
     });
+    console.log('[driver-profile] fcm-token registered/updated for driverId:', req.driver.id);
     res.json({ success: true });
   } catch (err) {
     next(err);

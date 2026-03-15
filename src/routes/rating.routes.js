@@ -10,6 +10,7 @@ router.use(authenticate);
 router.post('/:bookingId', async (req, res, next) => {
   try {
     const { rating, review, tags, tipAmount } = req.body;
+    console.log('[rating] POST rating — userId:', req.user.userId, 'bookingId:', req.params.bookingId, 'rating:', rating, 'tipAmount:', tipAmount || 0);
     if (!rating || rating < 1 || rating > 5) {
       return next(new AppError('Rating must be between 1 and 5', 400));
     }
@@ -54,10 +55,12 @@ router.post('/:bookingId', async (req, res, next) => {
 
       const avgRating =
         driverOrders.reduce((sum, o) => sum + o.rating, 0) / driverOrders.length;
+      const newAvgRating = Math.round(avgRating * 10) / 10;
+      console.log('[rating] Updated driver rating — driverId:', booking.driverId, 'new average:', newAvgRating, 'based on', driverOrders.length, 'ratings');
 
       await prisma.driver.update({
         where: { id: booking.driverId },
-        data: { rating: Math.round(avgRating * 10) / 10 },
+        data: { rating: newAvgRating },
       });
 
       // If tip, credit to driver wallet (future: driver wallet)

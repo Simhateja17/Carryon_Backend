@@ -36,6 +36,7 @@ router.post('/', upload.single('image'), async (req, res, next) => {
   try {
     let imageUrl;
     let type;
+    console.log('[driver-documents] POST upload — driverId:', req.driver.id);
 
     // Check if this is a JSON request (image already uploaded to Supabase)
     if (req.is('application/json') || (!req.file && req.body.imageUrl)) {
@@ -83,6 +84,7 @@ router.post('/', upload.single('image'), async (req, res, next) => {
       update: { imageUrl: imageUrl, status: 'PENDING', rejectionReason: null },
       create: { driverId: req.driver.id, type, imageUrl: imageUrl },
     });
+    console.log('[driver-documents] document upserted — driverId:', req.driver.id, 'type:', type, 'docId:', document.id, 'status:', document.status);
 
     res.status(201).json({ success: true, data: document });
   } catch (err) {

@@ -10,6 +10,7 @@ router.use(authenticate);
 router.post('/tickets', async (req, res, next) => {
   try {
     const { subject, category, message, bookingId, priority } = req.body;
+    console.log('[support] POST ticket — userId:', req.user.userId, 'subject:', subject, 'category:', category || 'OTHER', 'bookingId:', bookingId || 'none');
     if (!subject || !message) {
       return next(new AppError('Subject and message are required', 400));
     }
@@ -32,6 +33,7 @@ router.post('/tickets', async (req, res, next) => {
       include: { messages: true },
     });
 
+    console.log('[support] ticket created — ticketId:', ticket.id, 'userId:', req.user.userId, 'subject:', subject);
     res.status(201).json({ success: true, data: ticket });
   } catch (err) {
     next(err);

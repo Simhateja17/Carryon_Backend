@@ -12,6 +12,7 @@ router.use(authenticate);
 // since they are not in the token.
 router.get('/me', async (req, res, next) => {
   try {
+    console.log('[user] GET /me — userId:', req.user.userId);
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
       select: { id: true, profileImage: true, language: true, isVerified: true, referralCode: true, createdAt: true },
@@ -35,6 +36,7 @@ router.get('/me', async (req, res, next) => {
 router.put('/me', async (req, res, next) => {
   try {
     const { name, phone, profileImage, language } = req.body;
+    console.log('[user] PUT /me — userId:', req.user.userId);
     const user = await prisma.user.update({
       where: { id: req.user.userId },
       data: {
@@ -44,6 +46,7 @@ router.put('/me', async (req, res, next) => {
         ...(language !== undefined && { language }),
       },
     });
+    console.log('[user] PUT /me — updated userId:', user.id);
     res.json({ success: true, data: user });
   } catch (err) {
     next(err);

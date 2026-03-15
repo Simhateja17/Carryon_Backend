@@ -10,6 +10,7 @@ router.use(authenticateDriver, requireDriver);
 router.post('/', async (req, res, next) => {
   try {
     const { type, make, model, year, licensePlate, color } = req.body;
+    console.log('[driver-vehicle] POST upsert — driverId:', req.driver.id, 'type:', type, 'licensePlate:', licensePlate);
 
     const vehicle = await prisma.driverVehicle.upsert({
       where: { driverId: req.driver.id },
@@ -43,6 +44,7 @@ router.post('/', async (req, res, next) => {
       });
     }
 
+    console.log('[driver-vehicle] upserted — driverId:', req.driver.id, 'vehicleId:', vehicle.id);
     res.json({ success: true, data: vehicle });
   } catch (err) {
     next(err);

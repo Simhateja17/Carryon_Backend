@@ -33,6 +33,7 @@ router.get('/', async (req, res, next) => {
 router.post('/send', async (req, res, next) => {
   try {
     const { title, message, type = 'PROMO', audience = 'all' } = req.body;
+    console.log('[admin-notifications] POST send — audience:', audience, 'type:', type, 'title:', title);
 
     if (!title || !message) {
       return next(new AppError('Title and message are required', 400));
@@ -53,6 +54,7 @@ router.post('/send', async (req, res, next) => {
       where: whereClause,
       select: { id: true, name: true, email: true, fcmToken: true },
     });
+    console.log('[admin-notifications] send — audience:', audience, 'drivers targeted:', drivers.length);
 
     if (drivers.length === 0) {
       return res.json({ success: true, data: { sent: 0, message: 'No matching drivers found' } });
@@ -75,11 +77,13 @@ router.post('/send', async (req, res, next) => {
 
     let pushResult = { successCount: 0, failureCount: 0, failedTokens: [] };
     if (fcmTokens.length > 0) {
+      console.log('[admin-notifications] send — sending FCM to', fcmTokens.length, 'tokens');
       pushResult = await sendPushNotifications(
         fcmTokens,
         { title, body: message },
         { type, source: 'admin' }
       );
+      console.log('[admin-notifications] FCM result — successCount:', pushResult.successCount, 'failureCount:', pushResult.failureCount);
     }
 
     const failedTokenSet = new Set(pushResult.failedTokens);

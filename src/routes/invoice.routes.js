@@ -18,6 +18,7 @@ function generateInvoiceNumber() {
 // POST /api/invoices/:bookingId - Generate invoice for a booking
 router.post('/:bookingId', async (req, res, next) => {
   try {
+    console.log('[invoice] POST generate — userId:', req.user.userId, 'bookingId:', req.params.bookingId);
     const booking = await prisma.booking.findUnique({
       where: { id: req.params.bookingId },
       include: { pickupAddress: true, deliveryAddress: true, driver: true, invoice: true },
@@ -48,6 +49,7 @@ router.post('/:bookingId', async (req, res, next) => {
         currency: 'MYR',
       },
     });
+    console.log('[invoice] Generated — invoiceId:', invoice.id, 'invoiceNumber:', invoice.invoiceNumber, 'bookingId:', req.params.bookingId, 'total:', price);
 
     res.status(201).json({ success: true, data: invoice });
   } catch (err) {
@@ -58,6 +60,7 @@ router.post('/:bookingId', async (req, res, next) => {
 // GET /api/invoices/:bookingId - Get invoice for a booking
 router.get('/:bookingId', async (req, res, next) => {
   try {
+    console.log('[invoice] GET by bookingId — userId:', req.user.userId, 'bookingId:', req.params.bookingId);
     const invoice = await prisma.invoice.findUnique({
       where: { bookingId: req.params.bookingId },
     });

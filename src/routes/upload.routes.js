@@ -33,6 +33,7 @@ function getSupabase() {
 // POST /api/upload/package-image
 router.post('/package-image', upload.single('image'), async (req, res, next) => {
   try {
+    console.log('[upload] POST package-image — userId:', req.user.userId, 'fileSize:', req.file?.size);
     if (!req.file) {
       return next(new AppError('No image file provided', 400));
     }
@@ -56,6 +57,7 @@ router.post('/package-image', upload.single('image'), async (req, res, next) => 
       .from('package-images')
       .getPublicUrl(fileName);
 
+    console.log('[upload] package-image uploaded — userId:', req.user.userId, 'url:', urlData.publicUrl);
     res.json({
       success: true,
       data: { url: urlData.publicUrl },

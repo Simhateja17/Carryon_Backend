@@ -10,6 +10,7 @@ router.use(authenticate);
 router.post('/validate', async (req, res, next) => {
   try {
     const { code, orderAmount } = req.body;
+    console.log('[promo] POST validate — userId:', req.user.userId, 'code:', code, 'orderAmount:', orderAmount);
     if (!code) return next(new AppError('Promo code is required', 400));
 
     const coupon = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } });
@@ -43,6 +44,8 @@ router.post('/validate', async (req, res, next) => {
       discount = coupon.discountValue;
     }
 
+    const calculatedDiscount = Math.round(discount * 100) / 100;
+    console.log('[promo] validate — code:', coupon.code, 'userId:', req.user.userId, 'discount calculated:', calculatedDiscount);
     res.json({
       success: true,
       data: {
@@ -51,7 +54,7 @@ router.post('/validate', async (req, res, next) => {
         description: coupon.description,
         discountType: coupon.discountType,
         discountValue: coupon.discountValue,
-        calculatedDiscount: Math.round(discount * 100) / 100,
+        calculatedDiscount,
       },
     });
   } catch (err) {
@@ -63,6 +66,7 @@ router.post('/validate', async (req, res, next) => {
 router.post('/apply', async (req, res, next) => {
   try {
     const { code, bookingId } = req.body;
+    console.log('[promo] POST apply — userId:', req.user.userId, 'code:', code, 'bookingId:', bookingId);
     if (!code || !bookingId) return next(new AppError('Code and bookingId are required', 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
@@ -82,6 +86,7 @@ router.post('/apply', async (req, res, next) => {
     }
     discount = Math.round(discount * 100) / 100;
 
+    console.log('[promo] apply — code:', coupon.code, 'bookingId:', bookingId, 'discount:', discount, 'finalPrice:', booking.estimatedPrice - discount);
     const [updatedBooking] = await prisma.$transaction([
       prisma.booking.update({
         where: { id: bookingId },
@@ -176,6 +181,7 @@ router.get('/referral', async (req, res, next) => {
 router.post('/referral/apply', async (req, res, next) => {
   try {
     const { referralCode } = req.body;
+    console.log('[promo] POST referral/apply — userId:', req.user.userId, 'referralCode:', referralCode);
     if (!referralCode) return next(new AppError('Referral code is required', 400));
 
     const referrer = await prisma.user.findUnique({ where: { referralCode } });
@@ -191,6 +197,7 @@ router.post('/referral/apply', async (req, res, next) => {
     if (existing) return next(new AppError('You have already used a referral code', 400));
 
     const rewardAmount = 5.0; // RM 5
+    console.log('[promo] referral/apply — referralCode:', referralCode, 'referrerId:', referrer.id, 'userId:', req.user.userId, 'credit amount:', rewardAmount, 'each');
 
     await prisma.$transaction(async (tx) => {
       // Create referral record

@@ -30,6 +30,8 @@ router.post('/', async (req, res, next) => {
       senderName, senderPhone, receiverName, receiverPhone, notes
     } = req.body;
 
+    console.log('[booking] POST /api/bookings — userId:', req.user.userId, 'vehicleType:', vehicleType, 'paymentMethod:', paymentMethod || 'CASH', 'pickup:', pickupAddress?.address, 'delivery:', deliveryAddress?.address);
+
     if (!pickupAddress || !deliveryAddress) {
       return next(new AppError('pickupAddress and deliveryAddress are required', 400));
     }
@@ -81,6 +83,8 @@ router.post('/', async (req, res, next) => {
       });
     });
 
+    console.log('[booking] Created booking id:', booking.id, 'status:', booking.status, 'estimatedPrice:', booking.estimatedPrice);
+
     // Fire-and-forget FCM push to nearby online drivers
     prisma.driver.findMany({
       where: { isOnline: true, fcmToken: { not: null } },
@@ -91,14 +95,17 @@ router.post('/', async (req, res, next) => {
       const nearbyTokens = drivers
         .filter(d => haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM)
         .map(d => d.fcmToken);
+      console.log('[booking] FCM — online drivers found:', drivers.length, 'nearby within', DRIVER_SEARCH_RADIUS_KM, 'km:', nearbyTokens.length, 'tokens to notify');
       if (nearbyTokens.length === 0) return;
       return sendPushNotifications(
         nearbyTokens,
         { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },
         { type: 'JOB_REQUEST', bookingId: booking.id }
-      );
+      ).then((result) => {
+        console.log('[booking] FCM push sent for booking', booking.id, '— successCount:', result?.successCount, 'failureCount:', result?.failureCount);
+      });
     }).catch((err) => {
-      console.error('[booking] FCM push to drivers failed:', err);
+      console.error('[booking] FCM push to drivers failed:', err.message);
     });
 
     res.status(201).json({ success: true, data: booking });
@@ -114,11 +121,14 @@ router.get('/', async (req, res, next) => {
     const where = { userId: req.user.userId };
     if (status) where.status = status;
 
+    console.log('[booking] GET /api/bookings — userId:', req.user.userId, 'statusFilter:', status || 'all');
+
     const bookings = await prisma.booking.findMany({
       where,
       include: bookingIncludes,
       orderBy: { createdAt: 'desc' },
     });
+    console.log('[booking] GET /api/bookings — returned', bookings.length, 'bookings');
     res.json({ success: true, data: bookings });
   } catch (err) {
     next(err);
@@ -128,6 +138,7 @@ router.get('/', async (req, res, next) => {
 // GET /api/bookings/:id
 router.get('/:id', async (req, res, next) => {
   try {
+    console.log('[booking] GET /api/bookings/:id — userId:', req.user.userId, 'bookingId:', req.params.id);
     const booking = await prisma.booking.findUnique({
       where: { id: req.params.id },
       include: { ...bookingIncludes, order: true, invoice: true },
@@ -147,6 +158,7 @@ router.get('/:id', async (req, res, next) => {
 router.post('/:id/verify-delivery', async (req, res, next) => {
   try {
     const { otp, deliveryProofUrl } = req.body;
+    console.log('[booking] POST verify-delivery — userId:', req.user.userId, 'bookingId:', req.params.id);
     if (!otp) return next(new AppError('OTP is required', 400));
 
     const booking = await prisma.booking.findUnique({
@@ -163,6 +175,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
     }
 
     if (booking.otp !== otp) {
+      console.log('[booking] verify-delivery — OTP mismatch for bookingId:', req.params.id);
       return next(new AppError('Invalid delivery OTP', 400));
     }
 
@@ -176,6 +189,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       },
       include: bookingIncludes,
     });
+    console.log('[booking] verify-delivery — bookingId:', req.params.id, 'OTP matched, status → DELIVERED');
 
     // Auto-create order record
     await prisma.order.upsert({
@@ -204,6 +218,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
 router.put('/:id/status', async (req, res, next) => {
   try {
     const { status, eta } = req.body;
+    console.log('[booking] PUT status — userId:', req.user.userId, 'bookingId:', req.params.id, 'newStatus:', status);
     if (!status) return next(new AppError('Status is required', 400));
 
     const validStatuses = [
@@ -232,6 +247,7 @@ router.put('/:id/status', async (req, res, next) => {
       data: updateData,
       include: bookingIncludes,
     });
+    console.log('[booking] Status updated — bookingId:', req.params.id, booking.status, '→', updatedBooking.status);
 
     res.json({ success: true, data: updatedBooking });
   } catch (err) {
@@ -303,6 +319,7 @@ router.get('/:id/eta', async (req, res, next) => {
 router.post('/:id/cancel', async (req, res, next) => {
   try {
     const { reason } = req.body;
+    console.log('[booking] POST cancel — userId:', req.user.userId, 'bookingId:', req.params.id, 'reason:', reason || 'none');
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Booking not found', 404));
@@ -318,10 +335,12 @@ router.post('/:id/cancel', async (req, res, next) => {
       data: { status: 'CANCELLED' },
       include: bookingIncludes,
     });
+    console.log('[booking] Cancelled — bookingId:', req.params.id, 'previousStatus:', booking.status);
 
     // Refund wallet if paid via wallet
     if (booking.paymentMethod === 'WALLET' && booking.paymentStatus === 'COMPLETED') {
       const amount = booking.finalPrice || booking.estimatedPrice;
+      console.log('[booking] Cancel refund — bookingId:', req.params.id, 'refund amount:', amount);
       const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.userId } });
       if (wallet) {
         await prisma.$transaction([

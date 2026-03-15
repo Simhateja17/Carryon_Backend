@@ -7,6 +7,7 @@ const router = Router();
 // GET /api/admin/drivers — list all drivers with document/vehicle counts
 router.get('/', async (req, res, next) => {
   try {
+    console.log('[admin-drivers] GET /drivers — fetching all drivers');
     const drivers = await prisma.driver.findMany({
       include: {
         documents: { select: { id: true, type: true, status: true } },
@@ -15,6 +16,7 @@ router.get('/', async (req, res, next) => {
       orderBy: { createdAt: 'desc' },
     });
 
+    console.log('[admin-drivers] GET /drivers — returned', drivers.length, 'drivers');
     res.json({
       success: true,
       data: drivers.map((d) => ({
@@ -46,6 +48,7 @@ router.get('/', async (req, res, next) => {
 // GET /api/admin/drivers/:id — get full driver details with documents and vehicle
 router.get('/:id', async (req, res, next) => {
   try {
+    console.log('[admin-drivers] GET driver detail — driverId:', req.params.id);
     const driver = await prisma.driver.findUnique({
       where: { id: req.params.id },
       include: {
@@ -68,6 +71,7 @@ router.get('/:id', async (req, res, next) => {
 router.put('/:id/documents/:docId/review', async (req, res, next) => {
   try {
     const { status, rejectionReason } = req.body;
+    console.log('[admin-drivers] PUT document review — driverId:', req.params.id, 'docId:', req.params.docId, 'status:', status);
 
     if (!status || !['APPROVED', 'REJECTED'].includes(status)) {
       return next(new AppError('status must be APPROVED or REJECTED', 400));
@@ -104,6 +108,7 @@ router.put('/:id/documents/:docId/review', async (req, res, next) => {
 router.put('/:id/verify', async (req, res, next) => {
   try {
     const { verificationStatus } = req.body;
+    console.log('[admin-drivers] PUT verify — driverId:', req.params.id, 'verificationStatus:', verificationStatus);
     const validStatuses = ['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED'];
 
     if (!verificationStatus || !validStatuses.includes(verificationStatus)) {
@@ -128,6 +133,7 @@ router.put('/:id/verify', async (req, res, next) => {
       },
       include: { documents: true, vehicle: true },
     });
+    console.log('[admin-drivers] verify — driverId:', req.params.id, 'verificationStatus →', updated.verificationStatus, 'isVerified:', updated.isVerified);
 
     res.json({ success: true, data: updated });
   } catch (err) {

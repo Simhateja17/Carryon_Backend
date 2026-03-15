@@ -36,6 +36,7 @@ router.get('/', async (req, res, next) => {
 router.post('/topup', async (req, res, next) => {
   try {
     const { amount, paymentReference } = req.body;
+    console.log('[wallet] POST topup — userId:', req.user.userId, 'amount:', amount);
     if (!amount || amount <= 0) return next(new AppError('Invalid amount', 400));
     if (amount > 1000) return next(new AppError('Maximum top-up is RM 1000', 400));
 
@@ -56,6 +57,7 @@ router.post('/topup', async (req, res, next) => {
     });
 
     const updated = await prisma.wallet.findUnique({ where: { id: wallet.id } });
+    console.log('[wallet] topup — userId:', req.user.userId, 'amount:', amount, 'new balance:', updated.balance);
     res.json({ success: true, data: { balance: updated.balance } });
   } catch (err) {
     next(err);
@@ -66,6 +68,7 @@ router.post('/topup', async (req, res, next) => {
 router.post('/pay', async (req, res, next) => {
   try {
     const { bookingId } = req.body;
+    console.log('[wallet] POST pay — userId:', req.user.userId, 'bookingId:', bookingId);
     if (!bookingId) return next(new AppError('Booking ID is required', 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
@@ -101,6 +104,7 @@ router.post('/pay', async (req, res, next) => {
     ]);
 
     const updated = await prisma.wallet.findUnique({ where: { id: wallet.id } });
+    console.log('[wallet] pay — userId:', req.user.userId, 'bookingId:', bookingId, 'amount deducted:', amount, 'remaining balance:', updated.balance);
     res.json({ success: true, data: { balance: updated.balance, amountPaid: amount } });
   } catch (err) {
     next(err);

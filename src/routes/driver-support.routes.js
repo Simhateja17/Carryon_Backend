@@ -54,6 +54,7 @@ router.get('/tickets', async (req, res, next) => {
 router.post('/tickets', async (req, res, next) => {
   try {
     const { subject, category, description } = req.body;
+    console.log('[driver-support] POST ticket — driverId:', req.driver.id, 'subject:', subject, 'category:', category || 'GENERAL');
     if (!subject) return next(new AppError('Subject is required', 400));
 
     const ticket = await prisma.driverSupportTicket.create({
@@ -72,6 +73,7 @@ router.post('/tickets', async (req, res, next) => {
       include: { messages: true },
     });
 
+    console.log('[driver-support] ticket created — ticketId:', ticket.id, 'driverId:', req.driver.id, 'subject:', subject);
     res.status(201).json({ success: true, data: ticket });
   } catch (err) {
     next(err);
@@ -130,6 +132,7 @@ router.post('/tickets/:id/reply', async (req, res, next) => {
 router.post('/sos', async (req, res, next) => {
   try {
     const { latitude, longitude } = req.body;
+    console.log('[driver-support] POST SOS — driverId:', req.driver.id, 'location:', latitude, longitude);
 
     const ticket = await prisma.driverSupportTicket.create({
       data: {
@@ -156,6 +159,7 @@ router.post('/sos', async (req, res, next) => {
         type: 'ALERT',
       },
     });
+    console.log('[driver-support] SOS ticket created — ticketId:', ticket.id, 'driverId:', req.driver.id, 'location:', latitude, longitude);
 
     res.status(201).json({ success: true, data: ticket });
   } catch (err) {

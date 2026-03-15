@@ -110,6 +110,7 @@ router.get('/wallet', async (req, res, next) => {
 router.post('/wallet/withdraw', async (req, res, next) => {
   try {
     const { amount } = req.body;
+    console.log('[driver-earnings] POST withdraw — driverId:', req.driver.id, 'amount:', amount);
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, message: 'Invalid amount' });
     }
@@ -119,6 +120,7 @@ router.post('/wallet/withdraw', async (req, res, next) => {
     });
 
     if (!wallet || wallet.balance < amount) {
+      console.log('[driver-earnings] withdraw rejected — driverId:', req.driver.id, 'balance:', wallet?.balance, 'requested:', amount);
       return res.status(400).json({ success: false, message: 'Insufficient balance' });
     }
 
@@ -136,6 +138,7 @@ router.post('/wallet/withdraw', async (req, res, next) => {
       where: { id: wallet.id },
       data: { balance: { decrement: amount } },
     });
+    console.log('[driver-earnings] withdraw — driverId:', req.driver.id, 'amount:', amount, 'txnId:', transaction.id, 'status: PENDING');
 
     res.json({ success: true, data: transaction });
   } catch (err) {

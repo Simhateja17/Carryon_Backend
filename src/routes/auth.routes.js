@@ -123,6 +123,7 @@ router.post('/sync', authenticateToken, async (req, res, next) => {
   try {
     const { email } = req.user;
     const { name = '' } = req.body;
+    console.log('[auth] POST sync — email:', email);
 
     let user = await prisma.user.findUnique({ where: { email } });
     const isNewUser = !user;
@@ -132,6 +133,9 @@ router.post('/sync', authenticateToken, async (req, res, next) => {
         data: { email, name, isVerified: true },
       });
       await prisma.wallet.create({ data: { userId: user.id } });
+      console.log('[auth] sync — created new user id:', user.id, 'email:', email);
+    } else {
+      console.log('[auth] sync — found existing user id:', user.id, 'email:', email);
     }
 
     res.json({ success: true, user, isNewUser });

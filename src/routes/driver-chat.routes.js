@@ -9,6 +9,7 @@ router.use(authenticateDriver, requireDriver);
 // GET /api/driver/chat/:bookingId — get messages (marks USER messages as read)
 router.get('/:bookingId', async (req, res, next) => {
   try {
+    console.log('[driver-chat] GET messages — driverId:', req.driver.id, 'bookingId:', req.params.bookingId);
     const booking = await prisma.booking.findUnique({ where: { id: req.params.bookingId } });
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
@@ -28,6 +29,7 @@ router.get('/:bookingId', async (req, res, next) => {
       data: { isRead: true },
     });
 
+    console.log('[driver-chat] GET messages — bookingId:', req.params.bookingId, 'messages:', messages.length);
     res.json({ success: true, data: messages });
   } catch (err) {
     next(err);
@@ -38,6 +40,7 @@ router.get('/:bookingId', async (req, res, next) => {
 router.post('/:bookingId', async (req, res, next) => {
   try {
     const { message, imageUrl } = req.body;
+    console.log('[driver-chat] POST message — driverId:', req.driver.id, 'bookingId:', req.params.bookingId);
     if (!message && !imageUrl) return next(new AppError('Message or image is required', 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.bookingId } });
@@ -54,6 +57,7 @@ router.post('/:bookingId', async (req, res, next) => {
       },
     });
 
+    console.log('[driver-chat] Message sent — msgId:', chatMessage.id, 'bookingId:', req.params.bookingId);
     res.status(201).json({ success: true, data: chatMessage });
   } catch (err) {
     next(err);
