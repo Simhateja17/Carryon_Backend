@@ -254,7 +254,7 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
 
     const driver = await prisma.driver.findUnique({
       where: { id: deviceId },
-      select: { currentLatitude: true, currentLongitude: true, updatedAt: true },
+      select: { currentLatitude: true, currentLongitude: true, createdAt: true },
     });
 
     res.json({
@@ -263,7 +263,7 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
         deviceId,
         latitude: driver?.currentLatitude ?? 0,
         longitude: driver?.currentLongitude ?? 0,
-        timestamp: driver?.updatedAt?.toISOString() ?? '',
+        timestamp: driver?.createdAt?.toISOString() ?? '',
       },
     });
   } catch (err) {
