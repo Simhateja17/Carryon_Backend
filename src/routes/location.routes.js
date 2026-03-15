@@ -108,6 +108,11 @@ router.get('/reverse-geocode', authenticate, async (req, res, next) => {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`;
     const response = await googleMapsFetch(url);
 
+    if (response.status !== 'OK') {
+      console.warn(`[location] /reverse-geocode — non-OK status: ${response.status} (error_message: ${response.error_message || 'none'})`);
+      return res.json({ success: true, data: null });
+    }
+
     const r = response.results?.[0];
     if (!r) {
       return res.json({ success: true, data: null });
@@ -161,11 +166,32 @@ router.post('/calculate-route', authenticate, async (req, res, next) => {
     const distanceMeters = route.distanceMeters || 0;
     const durationSeconds = parseInt((route.duration || '0s').replace('s', ''), 10);
 
+    // Debug: log what polyline keys were returned
+    const polylineKeys = Object.keys(route.polyline || {});
+    console.log(`[location] /calculate-route — polyline keys: [${polylineKeys.join(', ')}]`);
+
     // Parse GeoJSON LineString geometry
     const geometry = [];
     const coords = route.polyline?.geoJsonLinestring?.coordinates || [];
     for (const coord of coords) {
       geometry.push({ lat: coord[1], lng: coord[0] });
+    }
+
+    // Fallback: decode encoded polyline if GeoJSON was empty
+    if (geometry.length === 0 && route.polyline?.encodedPolyline) {
+      console.log(`[location] /calculate-route — falling back to encoded polyline decoder`);
+      const encoded = route.polyline.encodedPolyline;
+      let index = 0, lat = 0, lng = 0;
+      while (index < encoded.length) {
+        let shift = 0, result = 0, b;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+        shift = 0; result = 0;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+        geometry.push({ lat: lat / 1e5, lng: lng / 1e5 });
+      }
+      console.log(`[location] /calculate-route — decoded ${geometry.length} points from encoded polyline`);
     }
 
     res.json({
@@ -345,17 +371,29 @@ router.get('/nearby', authenticate, async (req, res, next) => {
 });
 
 // POST /api/location/geocode
-// Body: { address }
+// Body: { address } or { placeId }
 router.post('/geocode', authenticate, async (req, res, next) => {
   try {
-    console.log(`[location] POST /geocode — address="${req.body.address}"`);
-    const { address } = req.body;
-    if (!address) {
-      return res.status(400).json({ success: false, message: 'address is required' });
+    const { address, placeId } = req.body;
+    console.log(`[location] POST /geocode — address="${address}" placeId="${placeId}"`);
+
+    if (!address && !placeId) {
+      return res.status(400).json({ success: false, message: 'address or placeId is required' });
     }
 
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_MAPS_API_KEY}`;
+    let url;
+    if (placeId) {
+      url = `https://maps.googleapis.com/maps/api/geocode/json?place_id=${encodeURIComponent(placeId)}&key=${GOOGLE_MAPS_API_KEY}`;
+    } else {
+      url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_MAPS_API_KEY}`;
+    }
+
     const response = await googleMapsFetch(url);
+
+    if (response.status !== 'OK') {
+      console.warn(`[location] /geocode — non-OK status: ${response.status} (error_message: ${response.error_message || 'none'})`);
+      return res.json({ success: true, data: null });
+    }
 
     const r = response.results?.[0];
     if (!r) {

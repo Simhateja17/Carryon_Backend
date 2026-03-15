@@ -88,15 +88,22 @@ router.post('/', async (req, res, next) => {
     // Fire-and-forget FCM push to nearby online drivers
     prisma.driver.findMany({
       where: { isOnline: true, fcmToken: { not: null } },
-      select: { fcmToken: true, currentLatitude: true, currentLongitude: true },
+      select: { id: true, name: true, fcmToken: true, currentLatitude: true, currentLongitude: true },
     }).then((drivers) => {
       const pickupLat = booking.pickupAddress.latitude;
       const pickupLng = booking.pickupAddress.longitude;
-      const nearbyTokens = drivers
-        .filter(d => haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM)
-        .map(d => d.fcmToken);
-      console.log('[booking] FCM — online drivers found:', drivers.length, 'nearby within', DRIVER_SEARCH_RADIUS_KM, 'km:', nearbyTokens.length, 'tokens to notify');
-      if (nearbyTokens.length === 0) return;
+      console.log('[booking] FCM driver search — booking:', booking.id, '| online drivers with token:', drivers.length);
+      const nearbyDrivers = drivers.filter(d =>
+        haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM
+      );
+      console.log('[booking] FCM nearby drivers (within', DRIVER_SEARCH_RADIUS_KM, 'km):', nearbyDrivers.length,
+        '| ids:', nearbyDrivers.map(d => d.id),
+        '| names:', nearbyDrivers.map(d => d.name));
+      const nearbyTokens = nearbyDrivers.map(d => d.fcmToken);
+      if (nearbyTokens.length === 0) {
+        console.log('[booking] FCM — no nearby drivers found for booking:', booking.id);
+        return;
+      }
       return sendPushNotifications(
         nearbyTokens,
         { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },

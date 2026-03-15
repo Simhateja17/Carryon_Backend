@@ -146,7 +146,7 @@ router.get('/completed', async (req, res, next) => {
 // GET /api/driver/jobs/incoming — SEARCHING_DRIVER bookings (available to accept)
 router.get('/incoming', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] GET /incoming — driverId:', req.driver.id, 'location:', req.driver.currentLatitude, req.driver.currentLongitude);
+    console.log('[driver-jobs] GET /incoming — driverId:', req.driver.id, 'driverName:', req.driver.name, 'location:', req.driver.currentLatitude, req.driver.currentLongitude);
     const bookings = await prisma.booking.findMany({
       where: {
         status: 'SEARCHING_DRIVER',
@@ -189,10 +189,11 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/driver/jobs/:id/accept
 router.post('/:id/accept', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] POST accept — driverId:', req.driver.id, 'bookingId:', req.params.id);
+    console.log('[driver-jobs] POST accept — driverId:', req.driver.id, 'driverName:', req.driver.name, 'bookingId:', req.params.id);
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Job not found', 404));
     if (booking.status !== 'SEARCHING_DRIVER') {
+      console.log('[driver-jobs] accept FAILED — bookingId:', req.params.id, 'current status:', booking.status, '(no longer SEARCHING_DRIVER)');
       return next(new AppError('Job is no longer available', 400));
     }
 
@@ -201,7 +202,7 @@ router.post('/:id/accept', async (req, res, next) => {
       data: { driverId: req.driver.id, status: 'DRIVER_ASSIGNED' },
       include: bookingInclude,
     });
-    console.log('[driver-jobs] Accepted — driverId:', req.driver.id, 'bookingId:', req.params.id, 'status → DRIVER_ASSIGNED');
+    console.log('[driver-jobs] ✔ Accepted — driverId:', req.driver.id, 'driverName:', req.driver.name, 'bookingId:', req.params.id, 'userId:', booking.userId, 'status → DRIVER_ASSIGNED');
 
     await prisma.driverNotification.create({
       data: {
