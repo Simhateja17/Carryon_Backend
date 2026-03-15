@@ -91,7 +91,7 @@ function toDeliveryJob(booking) {
 // GET /api/driver/jobs/active — bookings assigned to driver in active statuses
 router.get('/active', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] GET /active — driverId:', req.driver.id);
+    console.log('[driver-jobs] GET /active — driver:', req.driver.name);
     const bookings = await prisma.booking.findMany({
       where: {
         driverId: req.driver.id,
@@ -100,7 +100,7 @@ router.get('/active', async (req, res, next) => {
       include: bookingInclude,
       orderBy: { createdAt: 'desc' },
     });
-    console.log('[driver-jobs] GET /active — driverId:', req.driver.id, 'active jobs:', bookings.length);
+    console.log('[driver-jobs] GET /active — driver:', req.driver.name, 'active jobs:', bookings.length);
     res.json({ success: true, data: bookings.map(toDeliveryJob) });
   } catch (err) {
     next(err);
@@ -146,7 +146,7 @@ router.get('/completed', async (req, res, next) => {
 // GET /api/driver/jobs/incoming — SEARCHING_DRIVER bookings (available to accept)
 router.get('/incoming', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] GET /incoming — driverId:', req.driver.id, 'driverName:', req.driver.name, 'location:', req.driver.currentLatitude, req.driver.currentLongitude);
+    console.log('[driver-jobs] GET /incoming — driver:', req.driver.name, 'location:', req.driver.currentLatitude, req.driver.currentLongitude);
     const bookings = await prisma.booking.findMany({
       where: {
         status: 'SEARCHING_DRIVER',
@@ -163,7 +163,8 @@ router.get('/incoming', async (req, res, next) => {
       haversineKm(driverLat, driverLng, b.pickupAddress.latitude, b.pickupAddress.longitude)
       <= DRIVER_SEARCH_RADIUS_KM
     );
-    console.log('[driver-jobs] incoming — driverId:', req.driver.id, 'SEARCHING_DRIVER bookings found:', bookings.length, 'passed distance filter:', nearby.length);
+    console.log('[driver-jobs] incoming — driver:', req.driver.name, 'SEARCHING_DRIVER bookings found:', bookings.length, 'passed distance filter:', nearby.length,
+      nearby.length > 0 ? '| showing booking for user: ' + (nearby[0].user?.name || 'unknown') : '');
 
     const job = nearby.length > 0 ? toDeliveryJob(nearby[0]) : null;
     res.json({ success: true, data: job });
@@ -189,11 +190,11 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/driver/jobs/:id/accept
 router.post('/:id/accept', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] POST accept — driverId:', req.driver.id, 'driverName:', req.driver.name, 'bookingId:', req.params.id);
-    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    console.log('[driver-jobs] POST accept — driver:', req.driver.name, 'bookingId:', req.params.id);
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id }, include: bookingInclude });
     if (!booking) return next(new AppError('Job not found', 404));
     if (booking.status !== 'SEARCHING_DRIVER') {
-      console.log('[driver-jobs] accept FAILED — bookingId:', req.params.id, 'current status:', booking.status, '(no longer SEARCHING_DRIVER)');
+      console.log('[driver-jobs] accept FAILED — driver:', req.driver.name, 'bookingId:', req.params.id, 'current status:', booking.status, '(no longer SEARCHING_DRIVER)');
       return next(new AppError('Job is no longer available', 400));
     }
 
@@ -202,7 +203,7 @@ router.post('/:id/accept', async (req, res, next) => {
       data: { driverId: req.driver.id, status: 'DRIVER_ASSIGNED' },
       include: bookingInclude,
     });
-    console.log('[driver-jobs] ✔ Accepted — driverId:', req.driver.id, 'driverName:', req.driver.name, 'bookingId:', req.params.id, 'userId:', booking.userId, 'status → DRIVER_ASSIGNED');
+    console.log('[driver-jobs] ✔ Accepted — driver:', req.driver.name, 'bookingId:', req.params.id, 'customer:', booking.user?.name || 'unknown', 'status → DRIVER_ASSIGNED');
 
     await prisma.driverNotification.create({
       data: {
@@ -222,7 +223,7 @@ router.post('/:id/accept', async (req, res, next) => {
 // POST /api/driver/jobs/:id/reject
 router.post('/:id/reject', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] POST reject — driverId:', req.driver.id, 'bookingId:', req.params.id);
+    console.log('[driver-jobs] POST reject — driver:', req.driver.name, 'bookingId:', req.params.id);
     // Just acknowledge — we don't modify the booking
     res.json({ success: true, message: 'Job rejected' });
   } catch (err) {
@@ -234,7 +235,7 @@ router.post('/:id/reject', async (req, res, next) => {
 router.put('/:id/status', async (req, res, next) => {
   try {
     const { status } = req.body;
-    console.log('[driver-jobs] PUT status — driverId:', req.driver.id, 'bookingId:', req.params.id, 'driverStatus:', status);
+    console.log('[driver-jobs] PUT status — driver:', req.driver.name, 'bookingId:', req.params.id, 'driverStatus:', status);
     if (!status) return next(new AppError('Status is required', 400));
 
     const backendStatus = STATUS_MAP[status];
@@ -251,7 +252,7 @@ router.put('/:id/status', async (req, res, next) => {
       data: { status: backendStatus },
       include: bookingInclude,
     });
-    console.log('[driver-jobs] Status updated — driverId:', req.driver.id, 'bookingId:', req.params.id, 'mapped:', status, '→', backendStatus);
+    console.log('[driver-jobs] Status updated — driver:', req.driver.name, 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'mapped:', status, '→', backendStatus);
 
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
@@ -263,7 +264,7 @@ router.put('/:id/status', async (req, res, next) => {
 router.post('/:id/verify-pickup-otp', async (req, res, next) => {
   try {
     const { otp } = req.body;
-    console.log('[driver-jobs] POST verify-pickup-otp — driverId:', req.driver.id, 'bookingId:', req.params.id);
+    console.log('[driver-jobs] POST verify-pickup-otp — driver:', req.driver.name, 'bookingId:', req.params.id);
     if (!otp) return next(new AppError('OTP is required', 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
@@ -273,7 +274,7 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
       return next(new AppError('OTP verification is only allowed when driver has arrived at pickup', 400));
     }
     if (booking.otp !== otp) {
-      console.log('[driver-jobs] verify-pickup-otp — OTP mismatch for bookingId:', req.params.id);
+      console.log('[driver-jobs] verify-pickup-otp — OTP mismatch — driver:', req.driver.name, 'bookingId:', req.params.id);
       return next(new AppError('Invalid OTP', 400));
     }
 
@@ -282,7 +283,7 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
       data: { status: 'PICKUP_DONE' },
       include: bookingInclude,
     });
-    console.log('[driver-jobs] verify-pickup-otp — bookingId:', req.params.id, 'OTP matched, status → PICKUP_DONE');
+    console.log('[driver-jobs] verify-pickup-otp — driver:', req.driver.name, 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'OTP matched, status → PICKUP_DONE');
 
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
@@ -294,7 +295,7 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
 router.post('/:id/proof', async (req, res, next) => {
   try {
     const { photoUrl, recipientName, otpCode } = req.body;
-    console.log('[driver-jobs] POST proof — driverId:', req.driver.id, 'bookingId:', req.params.id);
+    console.log('[driver-jobs] POST proof — driver:', req.driver.name, 'bookingId:', req.params.id);
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Job not found', 404));
     if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
@@ -324,7 +325,7 @@ router.post('/:id/proof', async (req, res, next) => {
     const wallet = await prisma.driverWallet.findUnique({ where: { driverId: req.driver.id } });
     if (wallet) {
       const earning = updated.finalPrice || updated.estimatedPrice;
-      console.log('[driver-jobs] proof — bookingId:', req.params.id, 'crediting earnings:', earning, 'to driverId:', req.driver.id);
+      console.log('[driver-jobs] proof — driver:', req.driver.name, 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'crediting earnings:', earning);
       await prisma.driverWalletTransaction.create({
         data: {
           walletId: wallet.id,
@@ -348,6 +349,35 @@ router.post('/:id/proof', async (req, res, next) => {
       where: { id: req.driver.id },
       data: { totalTrips: { increment: 1 } },
     });
+
+    res.json({ success: true, data: toDeliveryJob(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/driver/jobs/:id/cancel — cancel an accepted job (re-queues it)
+router.post('/:id/cancel', async (req, res, next) => {
+  try {
+    console.log('[driver-jobs] POST cancel — driver:', req.driver.name, 'bookingId:', req.params.id);
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    if (!booking) return next(new AppError('Job not found', 404));
+    if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+
+    if (booking.status === 'DELIVERED' || booking.status === 'CANCELLED') {
+      return next(new AppError('Job is already completed or cancelled', 400));
+    }
+    if (['PICKUP_DONE', 'IN_TRANSIT'].includes(booking.status)) {
+      return next(new AppError('Cannot cancel after picking up the package', 400));
+    }
+
+    // DRIVER_ASSIGNED or DRIVER_ARRIVED — re-queue the job
+    const updated = await prisma.booking.update({
+      where: { id: req.params.id },
+      data: { status: 'SEARCHING_DRIVER', driverId: null },
+      include: bookingInclude,
+    });
+    console.log('[driver-jobs] cancel — driver:', req.driver.name, 'bookingId:', req.params.id, 'status → SEARCHING_DRIVER, driver unassigned');
 
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
