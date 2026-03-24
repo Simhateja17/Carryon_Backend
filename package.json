@@ -6,7 +6,7 @@
   "scripts": {
     "start": "npx prisma migrate deploy && node server.js",
     "dev": "nodemon server.js",
-    "build": "npx prisma db push && npx prisma generate",
+    "build": "npx prisma generate",
     "postinstall": "npx prisma generate"
   },
   "dependencies": {
