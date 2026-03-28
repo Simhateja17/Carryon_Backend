@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 // Initialize Firebase Admin SDK early
@@ -10,10 +11,36 @@ require('./lib/firebase');
 const app = express();
 
 // Middleware
-app.use(cors());
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(s => s.trim())
+  : [];
+app.use(cors(allowedOrigins.length > 0 ? {
+  origin: allowedOrigins,
+  credentials: true,
+} : undefined));
 app.use(helmet());
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+
+// Rate limiting
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 OTP requests per 15 min per IP
+  message: { success: false, message: 'Too many attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const walletLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5, // 5 wallet operations per minute
+  message: { success: false, message: 'Too many requests. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth/send-otp', authLimiter);
+app.use('/api/auth/verify-otp', authLimiter);
+app.use('/api/wallet/topup', walletLimiter);
+app.use('/api/wallet/pay', walletLimiter);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
@@ -46,9 +73,10 @@ app.use('/api/driver/support', require('./routes/driver-support.routes'));
 app.use('/api/driver/notifications', require('./routes/driver-notifications.routes'));
 app.use('/api/driver/chat', require('./routes/driver-chat.routes'));
 
-// Admin routes
-app.use('/api/admin/notifications', require('./routes/admin-notifications.routes'));
-app.use('/api/admin/drivers', require('./routes/admin-drivers.routes'));
+// Admin routes (protected by admin key)
+const { adminAuth } = require('./middleware/adminAuth');
+app.use('/api/admin/notifications', adminAuth, require('./routes/admin-notifications.routes'));
+app.use('/api/admin/drivers', adminAuth, require('./routes/admin-drivers.routes'));
 console.log('[app] All routes mounted');
 
 // Error handling

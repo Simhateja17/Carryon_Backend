@@ -189,6 +189,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       where: { id: req.params.id },
       data: {
         status: 'DELIVERED',
+        otp: null, // Clear OTP after successful verification to prevent reuse
         deliveryProofUrl: deliveryProofUrl || null,
         deliveredAt: new Date(),
         paymentStatus: booking.paymentMethod === 'CASH' ? 'COMPLETED' : booking.paymentStatus,
@@ -238,6 +239,22 @@ router.put('/:id/status', async (req, res, next) => {
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.userId !== req.user.userId) return next(new AppError('Not authorized', 403));
+
+    // State machine: only allow valid transitions
+    const allowedTransitions = {
+      PENDING: ['SEARCHING_DRIVER', 'CANCELLED'],
+      SEARCHING_DRIVER: ['DRIVER_ASSIGNED', 'CANCELLED'],
+      DRIVER_ASSIGNED: ['DRIVER_ARRIVED', 'CANCELLED'],
+      DRIVER_ARRIVED: ['PICKUP_DONE', 'CANCELLED'],
+      PICKUP_DONE: ['IN_TRANSIT', 'CANCELLED'],
+      IN_TRANSIT: ['DELIVERED', 'CANCELLED'],
+      DELIVERED: [],
+      CANCELLED: [],
+    };
+    const allowed = allowedTransitions[booking.status] || [];
+    if (!allowed.includes(status)) {
+      return next(new AppError(`Cannot transition from ${booking.status} to ${status}`, 400));
+    }
 
     const updateData = { status };
     if (eta !== undefined) updateData.eta = eta;

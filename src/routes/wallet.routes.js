@@ -78,17 +78,18 @@ router.post('/pay', async (req, res, next) => {
 
     const amount = booking.estimatedPrice - booking.discountAmount;
 
-    const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.userId } });
-    if (!wallet || wallet.balance < amount) {
-      return next(new AppError('Insufficient wallet balance', 400));
-    }
+    // Use interactive transaction to prevent race conditions
+    const result = await prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.findUnique({ where: { userId: req.user.userId } });
+      if (!wallet || wallet.balance < amount) {
+        throw new AppError('Insufficient wallet balance', 400);
+      }
 
-    await prisma.$transaction([
-      prisma.wallet.update({
+      await tx.wallet.update({
         where: { id: wallet.id },
         data: { balance: { decrement: amount } },
-      }),
-      prisma.walletTransaction.create({
+      });
+      await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
           type: 'PAYMENT',
@@ -96,16 +97,17 @@ router.post('/pay', async (req, res, next) => {
           description: `Payment for booking`,
           referenceId: bookingId,
         },
-      }),
-      prisma.booking.update({
+      });
+      await tx.booking.update({
         where: { id: bookingId },
         data: { paymentMethod: 'WALLET', paymentStatus: 'COMPLETED', finalPrice: amount },
-      }),
-    ]);
+      });
 
-    const updated = await prisma.wallet.findUnique({ where: { id: wallet.id } });
-    console.log('[wallet] pay — userId:', req.user.userId, 'bookingId:', bookingId, 'amount deducted:', amount, 'remaining balance:', updated.balance);
-    res.json({ success: true, data: { balance: updated.balance, amountPaid: amount } });
+      return tx.wallet.findUnique({ where: { id: wallet.id } });
+    });
+
+    console.log('[wallet] pay — userId:', req.user.userId, 'bookingId:', bookingId, 'amount deducted:', amount, 'remaining balance:', result.balance);
+    res.json({ success: true, data: { balance: result.balance, amountPaid: amount } });
   } catch (err) {
     next(err);
   }
