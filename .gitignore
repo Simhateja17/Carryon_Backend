@@ -11,9 +11,6 @@ node_modules/
 service-account.json
 *-firebase-adminsdk-*.json
 
-# Prisma
-prisma/migrations/*/
-
 # Logs
 logs/
 *.log
