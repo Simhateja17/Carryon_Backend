@@ -149,11 +149,20 @@ router.get('/completed', async (req, res, next) => {
 // GET /api/driver/jobs/incoming — SEARCHING_DRIVER bookings (available to accept)
 router.get('/incoming', async (req, res, next) => {
   try {
-    console.log('[driver-jobs] GET /incoming — driver:', driverLabel(req.driver), 'location:', req.driver.currentLatitude, req.driver.currentLongitude);
+    console.log('[driver-jobs] GET /incoming — driver:', driverLabel(req.driver), 'location:', req.driver.currentLatitude, req.driver.currentLongitude, 'vehicleType:', req.driver.vehicle?.type);
+
+    // Fetch bookings this driver has already rejected
+    const rejections = await prisma.bookingRejection.findMany({
+      where: { driverId: req.driver.id },
+      select: { bookingId: true },
+    });
+    const rejectedIds = rejections.map(r => r.bookingId);
+
     const bookings = await prisma.booking.findMany({
       where: {
         status: 'SEARCHING_DRIVER',
         driverId: null,
+        ...(rejectedIds.length > 0 && { id: { notIn: rejectedIds } }),
       },
       include: bookingInclude,
       orderBy: { createdAt: 'desc' },
@@ -162,11 +171,15 @@ router.get('/incoming', async (req, res, next) => {
 
     const driverLat = req.driver.currentLatitude;
     const driverLng = req.driver.currentLongitude;
-    const nearby = bookings.filter(b =>
-      haversineKm(driverLat, driverLng, b.pickupAddress.latitude, b.pickupAddress.longitude)
-      <= DRIVER_SEARCH_RADIUS_KM
-    );
-    console.log('[driver-jobs] incoming — driver:', driverLabel(req.driver), 'SEARCHING_DRIVER bookings found:', bookings.length, 'passed distance filter:', nearby.length,
+    const driverVehicleType = req.driver.vehicle?.type;
+
+    const nearby = bookings.filter(b => {
+      const withinRadius = haversineKm(driverLat, driverLng, b.pickupAddress.latitude, b.pickupAddress.longitude) <= DRIVER_SEARCH_RADIUS_KM;
+      const vehicleMatches = !driverVehicleType || b.vehicleType === driverVehicleType;
+      return withinRadius && vehicleMatches;
+    });
+
+    console.log('[driver-jobs] incoming — driver:', driverLabel(req.driver), 'SEARCHING_DRIVER bookings found:', bookings.length, 'passed filters:', nearby.length,
       nearby.length > 0 ? '| showing booking for user: ' + (nearby[0].user?.name || 'unknown') : '');
 
     const job = nearby.length > 0 ? toDeliveryJob(nearby[0]) : null;
@@ -227,7 +240,12 @@ router.post('/:id/accept', async (req, res, next) => {
 router.post('/:id/reject', async (req, res, next) => {
   try {
     console.log('[driver-jobs] POST reject — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
-    // Just acknowledge — we don't modify the booking
+    // Record rejection so this booking won't show up again for this driver
+    await prisma.bookingRejection.upsert({
+      where: { driverId_bookingId: { driverId: req.driver.id, bookingId: req.params.id } },
+      create: { driverId: req.driver.id, bookingId: req.params.id },
+      update: {},
+    });
     res.json({ success: true, message: 'Job rejected' });
   } catch (err) {
     next(err);

@@ -51,7 +51,7 @@ async function authenticateDriver(req, res, next) {
     const decoded = await verifyToken(token);
     const email = decoded.email;
 
-    const driver = await prisma.driver.findUnique({ where: { email } });
+    const driver = await prisma.driver.findUnique({ where: { email }, include: { vehicle: true } });
     if (!driver) {
       console.log('[DriverAuth] No driver found for email:', email, '- allowing registration flow');
       req.driver = null;

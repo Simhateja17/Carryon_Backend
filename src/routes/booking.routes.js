@@ -85,17 +85,20 @@ router.post('/', async (req, res, next) => {
 
     console.log('[booking] Created booking id:', booking.id, 'status:', booking.status, 'estimatedPrice:', booking.estimatedPrice);
 
-    // Fire-and-forget FCM push to nearby online drivers
+    // Fire-and-forget FCM push to nearby online drivers with matching vehicle type
     prisma.driver.findMany({
       where: { isOnline: true, fcmToken: { not: null } },
-      select: { id: true, name: true, fcmToken: true, currentLatitude: true, currentLongitude: true },
+      select: { id: true, name: true, fcmToken: true, currentLatitude: true, currentLongitude: true, vehicle: { select: { type: true } } },
     }).then((drivers) => {
       const pickupLat = booking.pickupAddress.latitude;
       const pickupLng = booking.pickupAddress.longitude;
-      console.log('[booking] FCM driver search — booking:', booking.id, '| online drivers with token:', drivers.length);
-      const nearbyDrivers = drivers.filter(d =>
-        haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM
-      );
+      const bookingVehicleType = booking.vehicleType;
+      console.log('[booking] FCM driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers with token:', drivers.length);
+      const nearbyDrivers = drivers.filter(d => {
+        const withinRadius = haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
+        const vehicleMatches = !bookingVehicleType || !d.vehicle?.type || d.vehicle.type === bookingVehicleType;
+        return withinRadius && vehicleMatches;
+      });
       console.log('[booking] FCM nearby drivers (within', DRIVER_SEARCH_RADIUS_KM, 'km):', nearbyDrivers.length,
         '| notifying:', nearbyDrivers.map(d => d.name));
       const nearbyTokens = nearbyDrivers.map(d => d.fcmToken);
