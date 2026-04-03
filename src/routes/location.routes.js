@@ -47,7 +47,8 @@ async function googleMapsFetch(url, method = 'GET', body = null, headers = {}) {
 // ──────────────────────────────────────────────────────────────
 
 // GET /api/location/search-places?query=...&lat=...&lng=...
-router.get('/search-places', authenticate, async (req, res, next) => {
+// Public: used by user app address entry before login is finalized.
+router.get('/search-places', async (req, res, next) => {
   try {
     console.log(`[location] GET /search-places — query="${req.query.query}" lat=${req.query.lat} lng=${req.query.lng}`);
     const { query, lat, lng } = req.query;
@@ -277,7 +278,8 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────
 
 // GET /api/location/autocomplete?query=...&lat=...&lng=...
-router.get('/autocomplete', authenticate, async (req, res, next) => {
+// Public: used by user app address entry before login is finalized.
+router.get('/autocomplete', async (req, res, next) => {
   try {
     console.log(`[location] GET /autocomplete — query="${req.query.query}" lat=${req.query.lat} lng=${req.query.lng}`);
     const { query, lat, lng } = req.query;
