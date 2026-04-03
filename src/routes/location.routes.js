@@ -97,7 +97,8 @@ router.get('/search-places', authenticate, async (req, res, next) => {
 });
 
 // GET /api/location/reverse-geocode?lat=...&lng=...
-router.get('/reverse-geocode', authenticate, async (req, res, next) => {
+// Public: used by pre-auth flows like "Use my location" on the app home screen.
+router.get('/reverse-geocode', async (req, res, next) => {
   try {
     console.log(`[location] GET /reverse-geocode — lat=${req.query.lat} lng=${req.query.lng}`);
     const { lat, lng } = req.query;
