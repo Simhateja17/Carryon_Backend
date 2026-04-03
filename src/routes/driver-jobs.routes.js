@@ -209,16 +209,33 @@ router.post('/:id/accept', async (req, res, next) => {
     console.log('[driver-jobs] POST accept — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id }, include: bookingInclude });
     if (!booking) return next(new AppError('Job not found', 404));
-    if (booking.status !== 'SEARCHING_DRIVER') {
-      console.log('[driver-jobs] accept FAILED — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'current status:', booking.status, '(no longer SEARCHING_DRIVER)');
-      return next(new AppError('Job is no longer available', 400));
+    if (booking.status !== 'SEARCHING_DRIVER' || booking.driverId) {
+      console.log('[driver-jobs] accept FAILED — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'current status:', booking.status, 'driverId:', booking.driverId || 'null');
+      return next(new AppError('Job is no longer available', 409));
     }
 
-    const updated = await prisma.booking.update({
+    const claimResult = await prisma.booking.updateMany({
+      where: {
+        id: req.params.id,
+        status: 'SEARCHING_DRIVER',
+        driverId: null,
+      },
+      data: {
+        driverId: req.driver.id,
+        status: 'DRIVER_ASSIGNED',
+      },
+    });
+
+    if (claimResult.count !== 1) {
+      console.log('[driver-jobs] accept CONFLICT — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'claim count:', claimResult.count);
+      return next(new AppError('Job is no longer available', 409));
+    }
+
+    const updated = await prisma.booking.findUnique({
       where: { id: req.params.id },
-      data: { driverId: req.driver.id, status: 'DRIVER_ASSIGNED' },
       include: bookingInclude,
     });
+    if (!updated) return next(new AppError('Job not found', 404));
     console.log('[driver-jobs] ✔ Accepted — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'customer:', booking.user?.name || 'unknown', 'status → DRIVER_ASSIGNED');
 
     await prisma.driverNotification.create({
@@ -320,55 +337,81 @@ router.post('/:id/proof', async (req, res, next) => {
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Job not found', 404));
     if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+    if (booking.status === 'DELIVERED') {
+      const alreadyDelivered = await prisma.booking.findUnique({
+        where: { id: req.params.id },
+        include: bookingInclude,
+      });
+      return res.json({ success: true, data: toDeliveryJob(alreadyDelivered) });
+    }
 
     const now = new Date();
 
-    // Update booking to DELIVERED
-    const updated = await prisma.booking.update({
-      where: { id: req.params.id },
-      data: {
-        status: 'DELIVERED',
-        deliveryProofUrl: photoUrl || null,
-        deliveredAt: now,
-        paymentStatus: 'COMPLETED',
-      },
-      include: bookingInclude,
-    });
-
-    // Create Order record
-    await prisma.order.upsert({
-      where: { bookingId: req.params.id },
-      update: { completedAt: now },
-      create: { bookingId: req.params.id, completedAt: now },
-    });
-
-    // Create earning transaction
-    const wallet = await prisma.driverWallet.findUnique({ where: { driverId: req.driver.id } });
-    if (wallet) {
-      const earning = updated.finalPrice || updated.estimatedPrice;
-      console.log('[driver-jobs] proof — driver:', driverLabel(req.driver), 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'crediting earnings:', earning);
-      await prisma.driverWalletTransaction.create({
+    const updated = await prisma.$transaction(async (tx) => {
+      const deliverResult = await tx.booking.updateMany({
+        where: {
+          id: req.params.id,
+          driverId: req.driver.id,
+          status: { not: 'DELIVERED' },
+        },
         data: {
-          walletId: wallet.id,
-          type: 'DELIVERY_EARNING',
-          amount: earning,
-          description: `Delivery earning for job ${req.params.id.slice(0, 8)}`,
-          jobId: req.params.id,
+          status: 'DELIVERED',
+          deliveryProofUrl: photoUrl || null,
+          deliveredAt: now,
+          paymentStatus: 'COMPLETED',
         },
       });
-      await prisma.driverWallet.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { increment: earning },
-          lifetimeEarnings: { increment: earning },
-        },
-      });
-    }
 
-    // Update driver stats
-    await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { totalTrips: { increment: 1 } },
+      const deliveredBooking = await tx.booking.findUnique({
+        where: { id: req.params.id },
+        include: bookingInclude,
+      });
+      if (!deliveredBooking) throw new AppError('Job not found', 404);
+      if (deliverResult.count !== 1) return deliveredBooking;
+
+      await tx.order.upsert({
+        where: { bookingId: req.params.id },
+        update: { completedAt: now },
+        create: { bookingId: req.params.id, completedAt: now },
+      });
+
+      const wallet = await tx.driverWallet.findUnique({ where: { driverId: req.driver.id } });
+      if (wallet) {
+        const existingEarning = await tx.driverWalletTransaction.findFirst({
+          where: {
+            walletId: wallet.id,
+            type: 'DELIVERY_EARNING',
+            jobId: req.params.id,
+          },
+        });
+        if (!existingEarning) {
+          const earning = deliveredBooking.finalPrice || deliveredBooking.estimatedPrice;
+          console.log('[driver-jobs] proof — driver:', driverLabel(req.driver), 'customer:', deliveredBooking.user?.name || 'unknown', 'bookingId:', req.params.id, 'crediting earnings:', earning);
+          await tx.driverWalletTransaction.create({
+            data: {
+              walletId: wallet.id,
+              type: 'DELIVERY_EARNING',
+              amount: earning,
+              description: `Delivery earning for job ${req.params.id.slice(0, 8)}`,
+              jobId: req.params.id,
+            },
+          });
+          await tx.driverWallet.update({
+            where: { id: wallet.id },
+            data: {
+              balance: { increment: earning },
+              lifetimeEarnings: { increment: earning },
+            },
+          });
+        }
+      }
+
+      await tx.driver.update({
+        where: { id: req.driver.id },
+        data: { totalTrips: { increment: 1 } },
+      });
+
+      return deliveredBooking;
     });
 
     res.json({ success: true, data: toDeliveryJob(updated) });
