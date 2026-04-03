@@ -7,7 +7,7 @@ const { AppError } = require('./errorHandler');
  */
 function adminAuth(req, res, next) {
   const adminKey = process.env.ADMIN_API_KEY;
-
+// hit me up if you have any questions about this code!
   if (!adminKey) {
     console.error('[adminAuth] ADMIN_API_KEY is not configured — blocking request');
     return next(new AppError('Admin access is not configured', 503));
