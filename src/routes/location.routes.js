@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticate } = require('../middleware/auth');
+const { authenticateToken } = require('../middleware/auth');
 const prisma = require('../lib/prisma');
 
 const router = express.Router();
@@ -141,7 +141,7 @@ router.get('/reverse-geocode', async (req, res, next) => {
 
 // POST /api/location/calculate-route
 // Body: { originLat, originLng, destLat, destLng }
-router.post('/calculate-route', authenticate, async (req, res, next) => {
+router.post('/calculate-route', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] POST /calculate-route — origin=(${req.body.originLat},${req.body.originLng}) dest=(${req.body.destLat},${req.body.destLng})`);
     const { originLat, originLng, destLat, destLng } = req.body;
@@ -210,7 +210,7 @@ router.post('/calculate-route', authenticate, async (req, res, next) => {
 });
 
 // GET /api/location/map-config
-router.get('/map-config', authenticate, async (req, res) => {
+router.get('/map-config', authenticateToken, async (req, res) => {
   console.log(`[location] GET /map-config`);
   res.json({
     success: true,
@@ -225,7 +225,7 @@ router.get('/map-config', authenticate, async (req, res) => {
 // POST /api/location/update-position
 // Body: { deviceId, latitude, longitude }
 // Persists the driver's position to the database
-router.post('/update-position', authenticate, async (req, res, next) => {
+router.post('/update-position', authenticateToken, async (req, res, next) => {
   try {
     const { deviceId, latitude, longitude } = req.body;
     if (!deviceId || latitude == null || longitude == null) {
@@ -250,7 +250,7 @@ router.post('/update-position', authenticate, async (req, res, next) => {
 
 // GET /api/location/get-position/:deviceId
 // Returns the driver's last known position from the database
-router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
+router.get('/get-position/:deviceId', authenticateToken, async (req, res, next) => {
   try {
     const { deviceId } = req.params;
 
@@ -326,7 +326,7 @@ router.get('/autocomplete', async (req, res, next) => {
 });
 
 // GET /api/location/nearby?lat=...&lng=...&categories=...&radius=...
-router.get('/nearby', authenticate, async (req, res, next) => {
+router.get('/nearby', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] GET /nearby — lat=${req.query.lat} lng=${req.query.lng} categories=${req.query.categories} radius=${req.query.radius}`);
     const { lat, lng, categories, radius } = req.query;
@@ -375,7 +375,7 @@ router.get('/nearby', authenticate, async (req, res, next) => {
 
 // POST /api/location/geocode
 // Body: { address } or { placeId }
-router.post('/geocode', authenticate, async (req, res, next) => {
+router.post('/geocode', authenticateToken, async (req, res, next) => {
   try {
     const { address, placeId } = req.body;
     console.log(`[location] POST /geocode — address="${address}" placeId="${placeId}"`);
@@ -420,7 +420,7 @@ router.post('/geocode', authenticate, async (req, res, next) => {
 
 // POST /api/location/snap-to-roads
 // Body: { points: [{lat, lng}, ...] }
-router.post('/snap-to-roads', authenticate, async (req, res, next) => {
+router.post('/snap-to-roads', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] POST /snap-to-roads — ${req.body.points?.length || 0} points`);
     const { points } = req.body;
@@ -448,7 +448,7 @@ router.post('/snap-to-roads', authenticate, async (req, res, next) => {
 // Body: { lat, lng, minutes }
 // Note: Google Maps doesn't have a direct isoline API.
 // This uses a circle approximation based on average driving speed.
-router.post('/isoline', authenticate, async (req, res, next) => {
+router.post('/isoline', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] POST /isoline — lat=${req.body.lat} lng=${req.body.lng} minutes=${req.body.minutes}`);
     const { lat, lng, minutes } = req.body;
@@ -488,7 +488,7 @@ router.post('/isoline', authenticate, async (req, res, next) => {
 });
 
 // GET /api/location/static-map?lat=...&lng=...&zoom=...&width=...&height=...
-router.get('/static-map', authenticate, async (req, res) => {
+router.get('/static-map', authenticateToken, async (req, res) => {
   console.log(`[location] GET /static-map — lat=${req.query.lat} lng=${req.query.lng} zoom=${req.query.zoom} ${req.query.width}x${req.query.height}`);
   const { lat, lng, zoom = 13, width = 400, height = 300 } = req.query;
   if (!lat || !lng) {
@@ -511,7 +511,7 @@ router.get('/static-map', authenticate, async (req, res) => {
 
 // POST /api/location/route-matrix
 // Body: { origins: [{lat,lng},...], destinations: [{lat,lng},...] }
-router.post('/route-matrix', authenticate, async (req, res, next) => {
+router.post('/route-matrix', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] POST /route-matrix — ${req.body.origins?.length || 0} origins, ${req.body.destinations?.length || 0} destinations`);
     const { origins, destinations } = req.body;
@@ -553,7 +553,7 @@ router.post('/route-matrix', authenticate, async (req, res, next) => {
 
 // POST /api/location/optimize-waypoints
 // Body: { origin: {lat,lng}, destination: {lat,lng}, waypoints: [{lat,lng},...] }
-router.post('/optimize-waypoints', authenticate, async (req, res, next) => {
+router.post('/optimize-waypoints', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] POST /optimize-waypoints — ${req.body.waypoints?.length || 0} waypoints`);
     const { origin, destination, waypoints } = req.body;
