@@ -40,7 +40,11 @@ function verifyToken(token) {
 async function authenticateDriver(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
-    console.log('[DriverAuth] No Authorization header or invalid format');
+    console.error('[DriverAuth] Authentication failed: missing/invalid Authorization header', {
+      path: req.originalUrl,
+      method: req.method,
+      ip: req.ip,
+    });
     return next(new AppError('Authentication required', 401));
   }
 
@@ -50,6 +54,14 @@ async function authenticateDriver(req, res, next) {
     
     const decoded = await verifyToken(token);
     const email = decoded.email;
+    if (!email) {
+      console.error('[DriverAuth] Authentication failed: token decoded without email', {
+        path: req.originalUrl,
+        method: req.method,
+        supabaseId: decoded.sub || null,
+      });
+      return next(new AppError('Invalid token payload', 401));
+    }
 
     const driver = await prisma.driver.findUnique({ where: { email }, include: { vehicle: true } });
     if (!driver) {
@@ -66,7 +78,12 @@ async function authenticateDriver(req, res, next) {
     req.supabaseId = decoded.sub;
     next();
   } catch (err) {
-    console.error('[DriverAuth] Authentication error:', err.message);
+    console.error('[DriverAuth] Authentication error', {
+      path: req.originalUrl,
+      method: req.method,
+      message: err.message,
+      name: err.name,
+    });
     next(new AppError('Invalid or expired token', 401));
   }
 }

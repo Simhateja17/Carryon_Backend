@@ -5,6 +5,12 @@ const { authenticateToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = Router();
+const maskEmail = (email = '') => {
+  const [local = '', domain = ''] = String(email).split('@');
+  if (!local || !domain) return email;
+  const visible = local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+};
 
 // Supabase Admin client for sending OTPs
 let _supabaseAdmin;
@@ -23,21 +29,29 @@ router.post('/send-otp', async (req, res, next) => {
   const { email, mode = 'login' } = req.body;
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    console.error('[auth] send-otp failed: invalid email payload', {
+      emailProvided: !!email,
+      mode,
+      path: req.originalUrl,
+      ip: req.ip,
+    });
     return next(new AppError('A valid email address is required.', 400));
   }
 
   try {
-    console.log(`[auth] send-otp request for ${email} (mode=${mode})`);
+    console.log(`[auth] send-otp request for ${maskEmail(email)} (mode=${mode})`);
 
     // Mode-based guards
     if (mode === 'login') {
       const existingUser = await prisma.user.findUnique({ where: { email } });
       if (!existingUser) {
+        console.error(`[auth] send-otp blocked: login requested for unknown user ${maskEmail(email)}`);
         return next(new AppError('No account found with this email. Please sign up.', 400));
       }
     } else if (mode === 'signup') {
       const existingUser = await prisma.user.findUnique({ where: { email } });
       if (existingUser) {
+        console.error(`[auth] send-otp blocked: signup requested for existing user ${maskEmail(email)}`);
         return next(new AppError('An account with this email already exists. Please log in.', 400));
       }
     }
@@ -54,14 +68,25 @@ router.post('/send-otp', async (req, res, next) => {
     });
 
     if (error) {
-      console.error(`[auth] Supabase OTP error:`, error.message);
+      console.error('[auth] send-otp failed: Supabase signInWithOtp error', {
+        email: maskEmail(email),
+        mode,
+        message: error.message,
+        status: error.status ?? null,
+        code: error.code ?? null,
+      });
       return next(new AppError('Failed to send verification code. Please try again.', 500));
     }
 
-    console.log(`[auth] OTP sent to ${email} via Supabase`);
+    console.log(`[auth] OTP sent to ${maskEmail(email)} via Supabase`);
     res.json({ success: true, message: 'OTP sent successfully.' });
   } catch (err) {
-    console.error(`[auth] send-otp failed for ${email}:`, err.message);
+    console.error('[auth] send-otp failed: unexpected error', {
+      email: maskEmail(email),
+      mode,
+      message: err.message,
+      stack: err.stack,
+    });
     next(err);
   }
 });
@@ -71,11 +96,18 @@ router.post('/verify-otp', async (req, res, next) => {
   const { email, otp, mode = 'login', name = '' } = req.body;
 
   if (!email || !otp) {
+    console.error('[auth] verify-otp failed: missing required fields', {
+      emailProvided: !!email,
+      otpProvided: !!otp,
+      mode,
+      path: req.originalUrl,
+      ip: req.ip,
+    });
     return next(new AppError('Email and OTP are required.', 400));
   }
 
   try {
-    console.log(`[auth] verify-otp request for ${email} (mode=${mode})`);
+    console.log(`[auth] verify-otp request for ${maskEmail(email)} (mode=${mode})`);
 
     // Verify OTP with Supabase
     const { data, error } = await getSupabaseAdmin().auth.verifyOtp({
@@ -85,13 +117,25 @@ router.post('/verify-otp', async (req, res, next) => {
     });
 
     if (error) {
-      console.error(`[auth] Supabase verify error:`, error.message);
+      console.error('[auth] verify-otp failed: Supabase verify error', {
+        email: maskEmail(email),
+        mode,
+        message: error.message,
+        status: error.status ?? null,
+        code: error.code ?? null,
+      });
       return next(new AppError('Incorrect or expired code. Please try again.', 400));
     }
 
     // Get the Supabase session token
     const token = data.session?.access_token;
     if (!token) {
+      console.error('[auth] verify-otp failed: missing access token in Supabase response', {
+        email: maskEmail(email),
+        mode,
+        hasSession: !!data.session,
+        hasUser: !!data.user,
+      });
       return next(new AppError('Verification failed. Please try again.', 500));
     }
 
@@ -110,10 +154,15 @@ router.post('/verify-otp', async (req, res, next) => {
       user = await prisma.user.findUnique({ where: { email } });
     }
 
-    console.log(`[auth] OTP verified for ${email} (mode=${mode})`);
+    console.log(`[auth] OTP verified for ${maskEmail(email)} (mode=${mode})`);
     res.json({ success: true, message: 'OTP verified successfully.', token, user, isNewUser });
   } catch (err) {
-    console.error(`[auth] verify-otp failed for ${email}:`, err.message);
+    console.error('[auth] verify-otp failed: unexpected error', {
+      email: maskEmail(email),
+      mode,
+      message: err.message,
+      stack: err.stack,
+    });
     next(err);
   }
 });

@@ -30,6 +30,11 @@ function verifyToken(token) {
 async function authenticate(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
+    console.error('[auth-mw] authenticate failed: missing/invalid Authorization header', {
+      path: req.originalUrl,
+      method: req.method,
+      ip: req.ip,
+    });
     return next(new AppError('Authentication required', 401));
   }
 
@@ -37,9 +42,22 @@ async function authenticate(req, res, next) {
     const token = header.split(' ')[1];
     const decoded = await verifyToken(token);
     const email = decoded.email;
+    if (!email) {
+      console.error('[auth-mw] authenticate failed: token decoded without email', {
+        path: req.originalUrl,
+        method: req.method,
+        supabaseId: decoded.sub || null,
+      });
+      return next(new AppError('Invalid token payload', 401));
+    }
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
+      console.error('[auth-mw] authenticate failed: user not found in Prisma', {
+        path: req.originalUrl,
+        method: req.method,
+        email,
+      });
       return next(new AppError('User not found. Please sync your account first.', 401));
     }
 
@@ -51,7 +69,13 @@ async function authenticate(req, res, next) {
       phone: user.phone,
     };
     next();
-  } catch {
+  } catch (err) {
+    console.error('[auth-mw] authenticate failed: token verification error', {
+      path: req.originalUrl,
+      method: req.method,
+      message: err.message,
+      name: err.name,
+    });
     next(new AppError('Invalid or expired token', 401));
   }
 }
@@ -60,18 +84,37 @@ async function authenticate(req, res, next) {
 async function authenticateToken(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
+    console.error('[auth-mw] authenticateToken failed: missing/invalid Authorization header', {
+      path: req.originalUrl,
+      method: req.method,
+      ip: req.ip,
+    });
     return next(new AppError('Authentication required', 401));
   }
 
   try {
     const token = header.split(' ')[1];
     const decoded = await verifyToken(token);
+    if (!decoded.email) {
+      console.error('[auth-mw] authenticateToken failed: token decoded without email', {
+        path: req.originalUrl,
+        method: req.method,
+        supabaseId: decoded.sub || null,
+      });
+      return next(new AppError('Invalid token payload', 401));
+    }
     req.user = {
       supabaseId: decoded.sub,
       email: decoded.email,
     };
     next();
-  } catch {
+  } catch (err) {
+    console.error('[auth-mw] authenticateToken failed: token verification error', {
+      path: req.originalUrl,
+      method: req.method,
+      message: err.message,
+      name: err.name,
+    });
     next(new AppError('Invalid or expired token', 401));
   }
 }

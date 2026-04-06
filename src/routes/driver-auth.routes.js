@@ -4,12 +4,25 @@ const { authenticateDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 
 const router = Router();
+const maskEmail = (email = '') => {
+  const [local = '', domain = ''] = String(email).split('@');
+  if (!local || !domain) return email;
+  const visible = local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+};
 
 // POST /api/driver/auth/sync — Create or find Driver by email from Supabase JWT
 router.post('/sync', authenticateDriver, async (req, res, next) => {
   try {
     const email = req.driverEmail;
-    console.log('[driver-auth] POST sync — email:', email);
+    if (!email) {
+      console.error('[driver-auth] sync failed: authenticated token has no email', {
+        path: req.originalUrl,
+        method: req.method,
+      });
+      return next(new AppError('Unable to identify driver email from token', 401));
+    }
+    console.log('[driver-auth] POST sync — email:', maskEmail(email));
     let driver = await prisma.driver.findUnique({
       where: { email },
       include: { documents: true, vehicle: true },
@@ -30,6 +43,10 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
 
     res.json({ success: true, driver, isNewDriver });
   } catch (err) {
+    console.error('[driver-auth] sync failed: unexpected error', {
+      message: err.message,
+      stack: err.stack,
+    });
     next(err);
   }
 });
@@ -39,9 +56,23 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
   try {
     const email = req.driverEmail;
     const { name, phone, emergencyContact } = req.body;
-    console.log('[driver-auth] POST register — email:', email, 'name:', name, 'phone:', phone);
+    if (!email) {
+      console.error('[driver-auth] register failed: authenticated token has no email', {
+        path: req.originalUrl,
+        method: req.method,
+      });
+      return next(new AppError('Unable to identify driver email from token', 401));
+    }
+    console.log('[driver-auth] POST register — email:', maskEmail(email), 'name:', name, 'phone:', phone);
 
-    if (!name) return next(new AppError('Name is required', 400));
+    if (!name) {
+      console.error('[driver-auth] register failed: missing required name', {
+        email: maskEmail(email),
+        hasPhone: !!phone,
+        hasEmergencyContact: !!emergencyContact,
+      });
+      return next(new AppError('Name is required', 400));
+    }
 
     let driver = await prisma.driver.findUnique({ where: { email } });
 
@@ -69,6 +100,10 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
 
     res.json({ success: true, driver });
   } catch (err) {
+    console.error('[driver-auth] register failed: unexpected error', {
+      message: err.message,
+      stack: err.stack,
+    });
     next(err);
   }
 });
