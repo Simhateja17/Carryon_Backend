@@ -22,7 +22,7 @@ router.get('/', async (req, res, next) => {
 // PUT /api/driver/profile
 router.put('/', async (req, res, next) => {
   try {
-    const { name, phone, photo, emergencyContact } = req.body;
+    const { name, phone, photo, emergencyContact, driversLicenseNumber, dateOfBirth } = req.body;
     const driver = await prisma.driver.update({
       where: { id: req.driver.id },
       data: {
@@ -30,6 +30,8 @@ router.put('/', async (req, res, next) => {
         ...(phone && { phone }),
         ...(photo && { photo }),
         ...(emergencyContact && { emergencyContact }),
+        ...(driversLicenseNumber && { driversLicenseNumber }),
+        ...(dateOfBirth && { dateOfBirth }),
       },
       include: { documents: true, vehicle: true },
     });

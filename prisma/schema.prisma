@@ -213,6 +213,8 @@ model Driver {
   name               String
   email              String                   @unique @default("")
   phone              String                   @default("")
+  driversLicenseNumber String                 @default("")
+  dateOfBirth        String                   @default("")
   photo              String?
   rating             Float                    @default(0)
   totalTrips         Int                      @default(0)
