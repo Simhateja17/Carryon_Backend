@@ -34,6 +34,7 @@ router.get('/', async (req, res, next) => {
         createdAt: d.createdAt,
         documentsCount: d.documents.length,
         documentsApproved: d.documents.filter((doc) => doc.status === 'APPROVED').length,
+        hasFcmToken: !!d.fcmToken,
         hasVehicle: !!d.vehicle,
         vehicleSummary: d.vehicle
           ? `${d.vehicle.type} — ${d.vehicle.make} ${d.vehicle.model}`

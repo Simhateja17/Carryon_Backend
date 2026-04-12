@@ -91,6 +91,101 @@ function toDeliveryJob(booking) {
   };
 }
 
+function bookingPayout(booking) {
+  return Number(booking.finalPrice || booking.estimatedPrice || 0);
+}
+
+function sortIncomingBookings(bookings) {
+  return [...bookings].sort((a, b) => {
+    const payoutDiff = bookingPayout(b) - bookingPayout(a);
+    if (payoutDiff !== 0) return payoutDiff;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
+async function getIncomingBookingsForDriver(driver) {
+  // Fetch bookings this driver has already rejected
+  const rejections = await prisma.bookingRejection.findMany({
+    where: { driverId: driver.id },
+    select: { bookingId: true },
+  });
+  const rejectedIds = rejections.map(r => r.bookingId);
+
+  // First priority: explicit admin-targeted requests for this driver.
+  const targetedNotifications = await prisma.driverNotification.findMany({
+    where: {
+      driverId: driver.id,
+      type: 'JOB_REQUEST',
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    select: { actionData: true },
+  });
+
+  const targetedBookingIds = targetedNotifications
+    .map((n) => {
+      try {
+        const payload = n.actionData ? JSON.parse(n.actionData) : null;
+        if (!payload || payload.targeted !== true || !payload.bookingId) return null;
+        return String(payload.bookingId);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  const targetedBookings = targetedBookingIds.length > 0
+    ? await prisma.booking.findMany({
+      where: {
+        id: {
+          in: targetedBookingIds,
+          ...(rejectedIds.length > 0 && { notIn: rejectedIds }),
+        },
+        status: 'SEARCHING_DRIVER',
+        driverId: null,
+      },
+      include: bookingInclude,
+      take: 50,
+    })
+    : [];
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      status: 'SEARCHING_DRIVER',
+      driverId: null,
+      ...(rejectedIds.length > 0 && { id: { notIn: rejectedIds } }),
+    },
+    include: bookingInclude,
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  const driverLat = driver.currentLatitude;
+  const driverLng = driver.currentLongitude;
+  const driverVehicleType = driver.vehicle?.type;
+
+  const nearby = bookings.filter((booking) => {
+    const withinRadius =
+      haversineKm(
+        driverLat,
+        driverLng,
+        booking.pickupAddress.latitude,
+        booking.pickupAddress.longitude
+      ) <= DRIVER_SEARCH_RADIUS_KM;
+    const vehicleMatches = !driverVehicleType || booking.vehicleType === driverVehicleType;
+    return withinRadius && vehicleMatches;
+  });
+
+  const dedupedById = new Map();
+  [...targetedBookings, ...nearby].forEach((booking) => {
+    if (!dedupedById.has(booking.id)) {
+      dedupedById.set(booking.id, booking);
+    }
+  });
+
+  return sortIncomingBookings(Array.from(dedupedById.values()));
+}
+
 // GET /api/driver/jobs/active — bookings assigned to driver in active statuses
 router.get('/active', async (req, res, next) => {
   try {
@@ -150,81 +245,21 @@ router.get('/completed', async (req, res, next) => {
 router.get('/incoming', async (req, res, next) => {
   try {
     console.log('[driver-jobs] GET /incoming — driver:', driverLabel(req.driver), 'location:', req.driver.currentLatitude, req.driver.currentLongitude, 'vehicleType:', req.driver.vehicle?.type);
-
-    // Fetch bookings this driver has already rejected
-    const rejections = await prisma.bookingRejection.findMany({
-      where: { driverId: req.driver.id },
-      select: { bookingId: true },
-    });
-    const rejectedIds = rejections.map(r => r.bookingId);
-
-    // First priority: explicit admin-targeted requests for this driver.
-    const targetedNotifications = await prisma.driverNotification.findMany({
-      where: {
-        driverId: req.driver.id,
-        type: 'JOB_REQUEST',
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 25,
-      select: { actionData: true },
-    });
-
-    const targetedBookingIds = targetedNotifications
-      .map((n) => {
-        try {
-          const payload = n.actionData ? JSON.parse(n.actionData) : null;
-          if (!payload || payload.targeted !== true || !payload.bookingId) return null;
-          return String(payload.bookingId);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-
-    if (targetedBookingIds.length > 0) {
-      const targetedBooking = await prisma.booking.findFirst({
-        where: {
-          id: { in: targetedBookingIds },
-          status: 'SEARCHING_DRIVER',
-          driverId: null,
-          ...(rejectedIds.length > 0 && { id: { in: targetedBookingIds, notIn: rejectedIds } }),
-        },
-        include: bookingInclude,
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (targetedBooking) {
-        console.log('[driver-jobs] incoming — targeted admin request found for driver:', driverLabel(req.driver), 'bookingId:', targetedBooking.id);
-        return res.json({ success: true, data: toDeliveryJob(targetedBooking) });
-      }
-    }
-
-    const bookings = await prisma.booking.findMany({
-      where: {
-        status: 'SEARCHING_DRIVER',
-        driverId: null,
-        ...(rejectedIds.length > 0 && { id: { notIn: rejectedIds } }),
-      },
-      include: bookingInclude,
-      orderBy: { createdAt: 'desc' },
-      take: 10,
-    });
-
-    const driverLat = req.driver.currentLatitude;
-    const driverLng = req.driver.currentLongitude;
-    const driverVehicleType = req.driver.vehicle?.type;
-
-    const nearby = bookings.filter(b => {
-      const withinRadius = haversineKm(driverLat, driverLng, b.pickupAddress.latitude, b.pickupAddress.longitude) <= DRIVER_SEARCH_RADIUS_KM;
-      const vehicleMatches = !driverVehicleType || b.vehicleType === driverVehicleType;
-      return withinRadius && vehicleMatches;
-    });
-
-    console.log('[driver-jobs] incoming — driver:', driverLabel(req.driver), 'SEARCHING_DRIVER bookings found:', bookings.length, 'passed filters:', nearby.length,
-      nearby.length > 0 ? '| showing booking for user: ' + (nearby[0].user?.name || 'unknown') : '');
-
-    const job = nearby.length > 0 ? toDeliveryJob(nearby[0]) : null;
+    const incoming = await getIncomingBookingsForDriver(req.driver);
+    console.log('[driver-jobs] incoming — driver:', driverLabel(req.driver), 'jobs eligible:', incoming.length);
+    const job = incoming.length > 0 ? toDeliveryJob(incoming[0]) : null;
     res.json({ success: true, data: job });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/driver/jobs/incoming-list — incoming offers sorted by payout desc
+router.get('/incoming-list', async (req, res, next) => {
+  try {
+    console.log('[driver-jobs] GET /incoming-list — driver:', driverLabel(req.driver));
+    const incoming = await getIncomingBookingsForDriver(req.driver);
+    res.json({ success: true, data: incoming.map(toDeliveryJob) });
   } catch (err) {
     next(err);
   }
