@@ -78,20 +78,47 @@ router.post('/location', async (req, res, next) => {
   }
 });
 
-// PUT /api/driver/profile/fcm-token — register FCM push token
+// PUT /api/driver/profile/fcm-token — register or clear FCM push token
 router.put('/fcm-token', async (req, res, next) => {
   try {
-    const { fcmToken } = req.body;
-    if (!fcmToken) {
-      return next(new AppError('fcmToken is required', 400));
+    const hasFcmTokenField = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'fcmToken');
+    if (!hasFcmTokenField) {
+      return next(new AppError('fcmToken field is required', 400));
     }
-    console.log('[driver-profile] PUT fcm-token — driverId:', req.driver.id, 'token:', fcmToken.slice(0, 10) + '...');
+
+    const rawToken = req.body.fcmToken;
+    if (rawToken !== null && typeof rawToken !== 'string') {
+      return next(new AppError('fcmToken must be a string or null', 400));
+    }
+
+    const normalizedToken = typeof rawToken === 'string' ? rawToken.trim() : null;
+    const shouldClear = normalizedToken == null || normalizedToken.length === 0;
+    if (shouldClear) {
+      console.log('[driver-profile] PUT fcm-token — clearing token for driverId:', req.driver.id);
+    } else {
+      console.log('[driver-profile] PUT fcm-token — driverId:', req.driver.id, 'token:', normalizedToken.slice(0, 10) + '...');
+    }
+
     await prisma.driver.update({
       where: { id: req.driver.id },
-      data: { fcmToken },
+      data: { fcmToken: shouldClear ? null : normalizedToken },
     });
-    console.log('[driver-profile] fcm-token registered/updated for driverId:', req.driver.id);
-    res.json({ success: true });
+
+    res.json({ success: true, data: { fcmTokenRegistered: !shouldClear } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/driver/profile/fcm-token — explicitly clear FCM push token
+router.delete('/fcm-token', async (req, res, next) => {
+  try {
+    await prisma.driver.update({
+      where: { id: req.driver.id },
+      data: { fcmToken: null },
+    });
+    console.log('[driver-profile] DELETE fcm-token — cleared for driverId:', req.driver.id);
+    res.json({ success: true, data: { fcmTokenRegistered: false } });
   } catch (err) {
     next(err);
   }

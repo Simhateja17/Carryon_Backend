@@ -1,4 +1,14 @@
 const admin = require('firebase-admin');
+const prisma = require('./prisma');
+
+const INVALID_TOKEN_ERROR_CODES = new Set([
+  'messaging/registration-token-not-registered',
+  'messaging/invalid-registration-token',
+]);
+
+function isInvalidTokenError(error) {
+  return !!error?.code && INVALID_TOKEN_ERROR_CODES.has(error.code);
+}
 
 // Initialize Firebase Admin SDK
 // Supports both:
@@ -60,16 +70,28 @@ initializeFirebase();
  * @param {string[]} tokens - Array of FCM device tokens
  * @param {object} notification - { title, body }
  * @param {object} [data] - Optional data payload
- * @returns {Promise<{ successCount: number, failureCount: number, failedTokens: string[] }>}
+ * @returns {Promise<{ successCount: number, failureCount: number, failedTokens: string[], invalidTokens: string[], cleanedInvalidTokens: number }>}
  */
 async function sendPushNotifications(tokens, notification, data = {}) {
   if (admin.apps.length === 0) {
     console.warn('[firebase] Not initialized — skipping push notification');
-    return { successCount: 0, failureCount: tokens.length, failedTokens: tokens };
+    return {
+      successCount: 0,
+      failureCount: tokens.length,
+      failedTokens: tokens,
+      invalidTokens: [],
+      cleanedInvalidTokens: 0,
+    };
   }
 
   if (!tokens || tokens.length === 0) {
-    return { successCount: 0, failureCount: 0, failedTokens: [] };
+    return {
+      successCount: 0,
+      failureCount: 0,
+      failedTokens: [],
+      invalidTokens: [],
+      cleanedInvalidTokens: 0,
+    };
   }
 
   // Convert all data values to strings (FCM requirement)
@@ -105,7 +127,13 @@ async function sendPushNotifications(tokens, notification, data = {}) {
     },
   };
 
-  const results = { successCount: 0, failureCount: 0, failedTokens: [] };
+  const results = {
+    successCount: 0,
+    failureCount: 0,
+    failedTokens: [],
+    invalidTokens: [],
+    cleanedInvalidTokens: 0,
+  };
 
   // Use sendEachForMulticast for batch sending
   if (tokens.length === 1) {
@@ -116,6 +144,9 @@ async function sendPushNotifications(tokens, notification, data = {}) {
       console.error(`[firebase] Failed to send to token: ${err.message}`);
       results.failureCount = 1;
       results.failedTokens.push(tokens[0]);
+      if (isInvalidTokenError(err)) {
+        results.invalidTokens.push(tokens[0]);
+      }
     }
   } else {
     try {
@@ -129,12 +160,32 @@ async function sendPushNotifications(tokens, notification, data = {}) {
         if (!resp.success) {
           console.error(`[firebase] Failed to send to token ${idx}: ${resp.error?.message}`);
           results.failedTokens.push(tokens[idx]);
+          if (isInvalidTokenError(resp.error)) {
+            results.invalidTokens.push(tokens[idx]);
+          }
         }
       });
     } catch (err) {
       console.error(`[firebase] Batch send failed: ${err.message}`);
       results.failureCount = tokens.length;
       results.failedTokens = [...tokens];
+    }
+  }
+
+  const uniqueInvalidTokens = Array.from(new Set(results.invalidTokens));
+  results.invalidTokens = uniqueInvalidTokens;
+  if (uniqueInvalidTokens.length > 0) {
+    try {
+      const cleanupResult = await prisma.driver.updateMany({
+        where: { fcmToken: { in: uniqueInvalidTokens } },
+        data: { fcmToken: null },
+      });
+      results.cleanedInvalidTokens = cleanupResult.count;
+      console.log(
+        `[firebase] Cleared ${cleanupResult.count} invalid FCM token(s) from Driver table`
+      );
+    } catch (err) {
+      console.error('[firebase] Failed to cleanup invalid FCM tokens:', err.message);
     }
   }
 
