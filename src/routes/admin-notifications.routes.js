@@ -56,6 +56,7 @@ router.post('/ride-request', async (req, res, next) => {
       price,
       vehicleType = 'CAR',
       paymentMethod = 'CASH',
+      driverIds = [],
     } = req.body;
 
     console.log('[admin-notifications] POST ride-request — vehicleType:', vehicleType, 'price:', price);
@@ -86,6 +87,9 @@ router.post('/ride-request', async (req, res, next) => {
     const validPaymentMethods = ['CASH', 'UPI', 'CARD', 'WALLET'];
     if (!validPaymentMethods.includes(paymentMethod)) {
       return next(new AppError(`Invalid paymentMethod. Must be one of: ${validPaymentMethods.join(', ')}`, 400));
+    }
+    if (!Array.isArray(driverIds)) {
+      return next(new AppError('driverIds must be an array', 400));
     }
 
     const testUserEmail = process.env.ADMIN_TEST_USER_EMAIL || FALLBACK_TEST_USER_EMAIL;
@@ -157,8 +161,13 @@ router.post('/ride-request', async (req, res, next) => {
       });
     });
 
-    const onlineDrivers = await prisma.driver.findMany({
-      where: { isOnline: true },
+    const isDirectTargeted = driverIds.length > 0;
+    const driverWhere = isDirectTargeted
+      ? { id: { in: driverIds } }
+      : { isOnline: true };
+
+    const candidateDrivers = await prisma.driver.findMany({
+      where: driverWhere,
       select: {
         id: true,
         name: true,
@@ -170,7 +179,8 @@ router.post('/ride-request', async (req, res, next) => {
       },
     });
 
-    const nearbyDrivers = onlineDrivers.filter((driver) => {
+    const nearbyDrivers = candidateDrivers.filter((driver) => {
+      if (isDirectTargeted) return true;
       const withinRadius =
         haversineKm(
           booking.pickupAddress.latitude,
@@ -196,7 +206,11 @@ router.post('/ride-request', async (req, res, next) => {
           title: 'New Ride Request!',
           message: `${booking.pickupAddress.address} → ${booking.deliveryAddress.address} (${parsedPrice.toFixed(2)})`,
           type: 'JOB_REQUEST',
-          actionData: JSON.stringify({ bookingId: booking.id, source: 'admin' }),
+          actionData: JSON.stringify({
+            bookingId: booking.id,
+            source: 'admin',
+            targeted: isDirectTargeted,
+          }),
         })),
       });
     }
@@ -223,6 +237,7 @@ router.post('/ride-request', async (req, res, next) => {
           type: 'JOB_REQUEST',
           bookingId: booking.id,
           source: 'admin',
+          targeted: isDirectTargeted ? 'true' : 'false',
         }
       );
     }
@@ -247,6 +262,7 @@ router.post('/ride-request', async (req, res, next) => {
         distance: booking.distance,
         duration: booking.duration,
         targetedDrivers,
+        targetingMode: isDirectTargeted ? 'selected_drivers' : 'nearby_online_drivers',
         push: {
           attempted: fcmTokens.length,
           delivered: pushResult.successCount,

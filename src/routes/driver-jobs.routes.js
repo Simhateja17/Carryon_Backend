@@ -158,6 +158,47 @@ router.get('/incoming', async (req, res, next) => {
     });
     const rejectedIds = rejections.map(r => r.bookingId);
 
+    // First priority: explicit admin-targeted requests for this driver.
+    const targetedNotifications = await prisma.driverNotification.findMany({
+      where: {
+        driverId: req.driver.id,
+        type: 'JOB_REQUEST',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      select: { actionData: true },
+    });
+
+    const targetedBookingIds = targetedNotifications
+      .map((n) => {
+        try {
+          const payload = n.actionData ? JSON.parse(n.actionData) : null;
+          if (!payload || payload.targeted !== true || !payload.bookingId) return null;
+          return String(payload.bookingId);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    if (targetedBookingIds.length > 0) {
+      const targetedBooking = await prisma.booking.findFirst({
+        where: {
+          id: { in: targetedBookingIds },
+          status: 'SEARCHING_DRIVER',
+          driverId: null,
+          ...(rejectedIds.length > 0 && { id: { in: targetedBookingIds, notIn: rejectedIds } }),
+        },
+        include: bookingInclude,
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (targetedBooking) {
+        console.log('[driver-jobs] incoming — targeted admin request found for driver:', driverLabel(req.driver), 'bookingId:', targetedBooking.id);
+        return res.json({ success: true, data: toDeliveryJob(targetedBooking) });
+      }
+    }
+
     const bookings = await prisma.booking.findMany({
       where: {
         status: 'SEARCHING_DRIVER',
