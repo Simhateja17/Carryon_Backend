@@ -69,6 +69,7 @@ router.post('/', async (req, res, next) => {
               longitude: pickupAddress.longitude || 0,
               contactName: pickupAddress.contactName || senderName || '',
               contactPhone: pickupAddress.contactPhone || senderPhone || '',
+              contactEmail: pickupAddress.contactEmail || '',
               landmark: pickupAddress.landmark || '',
               label: '',
               type: 'OTHER',
@@ -83,6 +84,7 @@ router.post('/', async (req, res, next) => {
               longitude: deliveryAddress.longitude || 0,
               contactName: deliveryAddress.contactName || receiverName || '',
               contactPhone: deliveryAddress.contactPhone || receiverPhone || '',
+              contactEmail: deliveryAddress.contactEmail || '',
               landmark: deliveryAddress.landmark || '',
               label: '',
               type: 'OTHER',
@@ -104,6 +106,7 @@ router.post('/', async (req, res, next) => {
               duration: duration || 0,
               paymentMethod: paymentMethod || 'CASH',
               otp: generateDeliveryOtp(),
+              dispatchSource: 'USER_APP',
               status: 'SEARCHING_DRIVER',
             },
             include: bookingIncludes,
@@ -215,7 +218,8 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       return next(new AppError('Booking is cancelled', 400));
     }
 
-    if (booking.otp !== otp) {
+    const expectedOtp = booking.deliveryOtp || booking.otp;
+    if (expectedOtp !== otp) {
       console.log('[booking] verify-delivery — OTP mismatch for bookingId:', req.params.id);
       return next(new AppError('Invalid delivery OTP', 400));
     }
@@ -224,7 +228,9 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       where: { id: req.params.id },
       data: {
         status: 'DELIVERED',
-        otp: null, // Clear OTP after successful verification to prevent reuse
+        otp: '', // Clear OTP after successful verification to prevent reuse
+        deliveryOtp: '',
+        deliveryOtpVerifiedAt: new Date(),
         deliveryProofUrl: deliveryProofUrl || null,
         deliveredAt: new Date(),
         paymentStatus: booking.paymentMethod === 'CASH' ? 'COMPLETED' : booking.paymentStatus,

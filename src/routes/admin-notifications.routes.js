@@ -40,6 +40,7 @@ function sanitizeAddress(input) {
     longitude: Number(input?.longitude),
     contactName: input?.contactName?.trim() || '',
     contactPhone: input?.contactPhone?.trim() || '',
+    contactEmail: input?.contactEmail?.trim() || '',
     landmark: input?.landmark?.trim() || '',
   };
 }
@@ -144,6 +145,7 @@ router.post('/ride-request', async (req, res, next) => {
               longitude: pickup.longitude,
               contactName: pickup.contactName,
               contactPhone: pickup.contactPhone,
+              contactEmail: pickup.contactEmail || '',
               landmark: pickup.landmark,
               label: 'Admin Test Pickup',
               type: 'OTHER',
@@ -158,6 +160,7 @@ router.post('/ride-request', async (req, res, next) => {
               longitude: delivery.longitude,
               contactName: delivery.contactName,
               contactPhone: delivery.contactPhone,
+              contactEmail: delivery.contactEmail || '',
               landmark: delivery.landmark,
               label: 'Admin Test Drop',
               type: 'OTHER',
@@ -180,6 +183,7 @@ router.post('/ride-request', async (req, res, next) => {
               paymentMethod,
               status: 'SEARCHING_DRIVER',
               otp: generateDeliveryOtp(),
+              dispatchSource: 'ADMIN',
             },
             include: {
               pickupAddress: true,
@@ -454,6 +458,50 @@ router.get('/stats', async (req, res, next) => {
       success: true,
       data: { totalDrivers, onlineDrivers, totalBookings, activeBookings, totalNotifications },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/admin/notifications/recipient-otps — monitor recipient OTPs for admin-dispatched bookings
+router.get('/recipient-otps', async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const status = String(req.query.status || 'all').toLowerCase();
+    const where = {
+      dispatchSource: 'ADMIN',
+      ...(status === 'active' ? { deliveryOtp: { not: '' } } : {}),
+      ...(status === 'verified' ? { deliveryOtpVerifiedAt: { not: null } } : {}),
+    };
+
+    const bookings = await prisma.booking.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        deliveryAddress: true,
+        driver: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    const data = bookings.map((booking) => ({
+      bookingId: booking.id,
+      orderCode: booking.orderCode,
+      bookingStatus: booking.status,
+      dispatchSource: booking.dispatchSource,
+      recipientName: booking.deliveryAddress?.contactName || booking.user?.name || '',
+      recipientEmail: booking.deliveryAddress?.contactEmail || booking.user?.email || '',
+      deliveryOtp: booking.deliveryOtp || '',
+      otpSentAt: booking.deliveryOtpSentAt?.toISOString() || null,
+      otpVerifiedAt: booking.deliveryOtpVerifiedAt?.toISOString() || null,
+      createdAt: booking.createdAt?.toISOString() || null,
+      driver: booking.driver
+        ? { id: booking.driver.id, name: booking.driver.name, email: booking.driver.email }
+        : null,
+    }));
+
+    res.json({ success: true, data });
   } catch (err) {
     next(err);
   }

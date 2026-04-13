@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const { createClient } = require('@supabase/supabase-js');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
@@ -12,6 +13,23 @@ router.use(authenticateDriver, requireDriver);
 
 // Helper: display name for logs (falls back to email if name is blank)
 const driverLabel = (d) => d?.name?.trim() || d?.email || d?.id || 'unknown';
+const maskEmail = (email = '') => {
+  const [local = '', domain = ''] = String(email).split('@');
+  if (!local || !domain) return email;
+  const visible = local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
+};
+const generateDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000).toString();
+let _supabaseAdmin;
+function getSupabaseAdmin() {
+  if (!_supabaseAdmin) {
+    _supabaseAdmin = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+  }
+  return _supabaseAdmin;
+}
 
 // Map driver app status → backend BookingStatus
 const STATUS_MAP = {
@@ -42,7 +60,7 @@ function toDriverStatus(bookingStatus, extraData) {
 const bookingInclude = {
   pickupAddress: true,
   deliveryAddress: true,
-  user: { select: { id: true, name: true, phone: true, profileImage: true } },
+  user: { select: { id: true, name: true, email: true, phone: true, profileImage: true } },
 };
 
 // Transform a booking into a DeliveryJob shape for the driver app
@@ -68,9 +86,11 @@ function toDeliveryJob(booking) {
       longitude: booking.deliveryAddress.longitude,
       contactName: booking.deliveryAddress.contactName,
       contactPhone: booking.deliveryAddress.contactPhone,
+      contactEmail: booking.deliveryAddress.contactEmail || '',
       instructions: booking.deliveryAddress.landmark || '',
     },
     customerName: booking.user?.name || '',
+    customerEmail: booking.user?.email || '',
     customerPhone: booking.user?.phone || '',
     packageType: booking.vehicleType,
     packageSize: 'MEDIUM',
@@ -414,6 +434,76 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
   }
 });
 
+// POST /api/driver/jobs/:id/request-delivery-otp — generate/send recipient OTP at drop-off
+router.post('/:id/request-delivery-otp', async (req, res, next) => {
+  try {
+    console.log('[driver-jobs] POST request-delivery-otp — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.id },
+      include: bookingInclude,
+    });
+    if (!booking) return next(new AppError('Job not found', 404));
+    if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+    if (booking.status === 'DELIVERED' || booking.status === 'CANCELLED') {
+      return next(new AppError('Cannot request OTP for completed/cancelled job', 400));
+    }
+
+    const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
+    const generatedOtp = generateDeliveryOtp();
+    const updateData = {
+      deliveryOtpSentAt: new Date(),
+      deliveryOtpVerifiedAt: null,
+    };
+    const isAdminDispatch = booking.dispatchSource === 'ADMIN';
+    if (isAdminDispatch) {
+      updateData.deliveryOtp = generatedOtp;
+    } else {
+      updateData.deliveryOtp = '';
+    }
+    await prisma.booking.update({
+      where: { id: req.params.id },
+      data: updateData,
+    });
+
+    if (!isAdminDispatch && recipientEmail) {
+      const { error } = await getSupabaseAdmin().auth.signInWithOtp({
+        email: recipientEmail,
+        options: { shouldCreateUser: true },
+      });
+      if (error) {
+        return next(new AppError(`Failed to send recipient OTP email: ${error.message}`, 500));
+      }
+    }
+
+    console.log(
+      '[driver-jobs] request-delivery-otp — driver:',
+      driverLabel(req.driver),
+      'bookingId:',
+      req.params.id,
+      'dispatchSource:',
+      booking.dispatchSource,
+      'recipient:',
+      maskEmail(recipientEmail),
+      'otpStoredForAdmin:',
+      isAdminDispatch ? generatedOtp : '[supabase-email-otp]'
+    );
+
+    res.json({
+      success: true,
+      data: {
+        recipientEmail: recipientEmail ? maskEmail(recipientEmail) : '',
+        otpSentAt: new Date().toISOString(),
+        adminOtp: isAdminDispatch ? generatedOtp : null,
+      },
+      message: recipientEmail
+        ? `OTP sent for ${maskEmail(recipientEmail)}`
+        : 'OTP generated (recipient email missing)',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/driver/jobs/:id/proof — proof of delivery
 router.post('/:id/proof', async (req, res, next) => {
   try {
@@ -429,6 +519,28 @@ router.post('/:id/proof', async (req, res, next) => {
       });
       return res.json({ success: true, data: toDeliveryJob(alreadyDelivered) });
     }
+    if (!otpCode || String(otpCode).trim().length < 4) {
+      return next(new AppError('Recipient OTP is required', 400));
+    }
+    const normalizedOtp = String(otpCode).trim();
+    const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
+
+    if (booking.dispatchSource === 'ADMIN') {
+      if (!booking.deliveryOtp || booking.deliveryOtp !== normalizedOtp) {
+        return next(new AppError('Invalid recipient OTP', 400));
+      }
+    } else if (recipientEmail) {
+      const { error } = await getSupabaseAdmin().auth.verifyOtp({
+        email: recipientEmail,
+        token: normalizedOtp,
+        type: 'email',
+      });
+      if (error) {
+        return next(new AppError('Invalid recipient OTP', 400));
+      }
+    } else if (!booking.deliveryOtp || booking.deliveryOtp !== normalizedOtp) {
+      return next(new AppError('Invalid recipient OTP', 400));
+    }
 
     const now = new Date();
 
@@ -442,6 +554,8 @@ router.post('/:id/proof', async (req, res, next) => {
         data: {
           status: 'DELIVERED',
           deliveryProofUrl: photoUrl || null,
+          deliveryOtp: '',
+          deliveryOtpVerifiedAt: now,
           deliveredAt: now,
           paymentStatus: 'COMPLETED',
         },

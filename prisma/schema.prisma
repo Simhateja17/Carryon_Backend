@@ -190,6 +190,7 @@ model Address {
   longitude    Float       @default(0)
   contactName  String      @default("")
   contactPhone String      @default("")
+  contactEmail String      @default("")
   type         AddressType @default(OTHER)
 
   user             User      @relation(fields: [userId], references: [id])
@@ -357,6 +358,10 @@ model Booking {
   packageImageUrl   String?
   driverId          String?
   otp               String        @default("")
+  dispatchSource    String        @default("USER_APP")
+  deliveryOtp       String        @default("")
+  deliveryOtpSentAt DateTime?
+  deliveryOtpVerifiedAt DateTime?
   promoCode         String?
   discountAmount    Float         @default(0)
   deliveryProofUrl  String?
