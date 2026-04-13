@@ -5,6 +5,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
+const OFFER_EXPIRY_MS = 60 * 1000;
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -46,8 +47,10 @@ const bookingInclude = {
 
 // Transform a booking into a DeliveryJob shape for the driver app
 function toDeliveryJob(booking) {
+  const expiresAt = new Date(booking.createdAt.getTime() + OFFER_EXPIRY_MS);
   return {
     id: booking.id,
+    displayOrderId: booking.orderCode || booking.id,
     status: toDriverStatus(booking.status),
     pickup: {
       address: booking.pickupAddress.address,
@@ -75,6 +78,7 @@ function toDeliveryJob(booking) {
     distance: booking.distance,
     estimatedDuration: booking.duration,
     createdAt: booking.createdAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
     scheduledAt: booking.scheduledTime?.toISOString() || null,
     acceptedAt: null,
     pickedUpAt: null,
@@ -101,6 +105,15 @@ function sortIncomingBookings(bookings) {
     if (payoutDiff !== 0) return payoutDiff;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
+}
+
+function activeOfferWhereClause(extraWhere = {}) {
+  return {
+    status: 'SEARCHING_DRIVER',
+    driverId: null,
+    createdAt: { gte: new Date(Date.now() - OFFER_EXPIRY_MS) },
+    ...extraWhere,
+  };
 }
 
 async function getIncomingBookingsForDriver(driver) {
@@ -136,25 +149,21 @@ async function getIncomingBookingsForDriver(driver) {
 
   const targetedBookings = targetedBookingIds.length > 0
     ? await prisma.booking.findMany({
-      where: {
+      where: activeOfferWhereClause({
         id: {
           in: targetedBookingIds,
           ...(rejectedIds.length > 0 && { notIn: rejectedIds }),
         },
-        status: 'SEARCHING_DRIVER',
-        driverId: null,
-      },
+      }),
       include: bookingInclude,
       take: 50,
     })
     : [];
 
   const bookings = await prisma.booking.findMany({
-    where: {
-      status: 'SEARCHING_DRIVER',
-      driverId: null,
-      ...(rejectedIds.length > 0 && { id: { notIn: rejectedIds } }),
-    },
+    where: activeOfferWhereClause(
+      rejectedIds.length > 0 ? { id: { notIn: rejectedIds } } : {}
+    ),
     include: bookingInclude,
     orderBy: { createdAt: 'desc' },
     take: 50,

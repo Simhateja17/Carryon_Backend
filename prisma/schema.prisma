@@ -341,6 +341,7 @@ model HelpArticle {
 
 model Booking {
   id                String        @id @default(uuid())
+  orderCode         String        @unique
   userId            String
   pickupAddressId   String
   deliveryAddressId String

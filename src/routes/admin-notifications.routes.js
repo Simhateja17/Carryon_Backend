@@ -12,6 +12,27 @@ function generateDeliveryOtp() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function nextOrderCodeFromLast(lastOrderCode) {
+  const match = /^ORD-(\d+)$/.exec(lastOrderCode || '');
+  const next = match ? Number(match[1]) + 1 : 1;
+  return `ORD-${String(next).padStart(6, '0')}`;
+}
+
+async function generateNextOrderCode(tx) {
+  const latest = await tx.booking.findFirst({
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { orderCode: true },
+  });
+  return nextOrderCodeFromLast(latest?.orderCode);
+}
+
+function isOrderCodeConflict(err) {
+  const target = err?.meta?.target;
+  if (err?.code !== 'P2002') return false;
+  if (Array.isArray(target)) return target.includes('orderCode');
+  return typeof target === 'string' && target.includes('orderCode');
+}
+
 function sanitizeAddress(input) {
   return {
     address: input?.address?.trim() || '',
@@ -111,55 +132,66 @@ router.post('/ride-request', async (req, res, next) => {
     );
     const duration = Math.max(5, Math.round((distance / 30) * 60));
 
-    const booking = await prisma.$transaction(async (tx) => {
-      const pickupAddress = await tx.address.create({
-        data: {
-          userId: testUser.id,
-          address: pickup.address,
-          latitude: pickup.latitude,
-          longitude: pickup.longitude,
-          contactName: pickup.contactName,
-          contactPhone: pickup.contactPhone,
-          landmark: pickup.landmark,
-          label: 'Admin Test Pickup',
-          type: 'OTHER',
-        },
-      });
+    let booking = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        booking = await prisma.$transaction(async (tx) => {
+          const pickupAddress = await tx.address.create({
+            data: {
+              userId: testUser.id,
+              address: pickup.address,
+              latitude: pickup.latitude,
+              longitude: pickup.longitude,
+              contactName: pickup.contactName,
+              contactPhone: pickup.contactPhone,
+              landmark: pickup.landmark,
+              label: 'Admin Test Pickup',
+              type: 'OTHER',
+            },
+          });
 
-      const deliveryAddress = await tx.address.create({
-        data: {
-          userId: testUser.id,
-          address: delivery.address,
-          latitude: delivery.latitude,
-          longitude: delivery.longitude,
-          contactName: delivery.contactName,
-          contactPhone: delivery.contactPhone,
-          landmark: delivery.landmark,
-          label: 'Admin Test Drop',
-          type: 'OTHER',
-        },
-      });
+          const deliveryAddress = await tx.address.create({
+            data: {
+              userId: testUser.id,
+              address: delivery.address,
+              latitude: delivery.latitude,
+              longitude: delivery.longitude,
+              contactName: delivery.contactName,
+              contactPhone: delivery.contactPhone,
+              landmark: delivery.landmark,
+              label: 'Admin Test Drop',
+              type: 'OTHER',
+            },
+          });
 
-      return tx.booking.create({
-        data: {
-          userId: testUser.id,
-          pickupAddressId: pickupAddress.id,
-          deliveryAddressId: deliveryAddress.id,
-          vehicleType,
-          estimatedPrice: parsedPrice,
-          finalPrice: parsedPrice,
-          distance,
-          duration,
-          paymentMethod,
-          status: 'SEARCHING_DRIVER',
-          otp: generateDeliveryOtp(),
-        },
-        include: {
-          pickupAddress: true,
-          deliveryAddress: true,
-        },
-      });
-    });
+          const orderCode = await generateNextOrderCode(tx);
+
+          return tx.booking.create({
+            data: {
+              orderCode,
+              userId: testUser.id,
+              pickupAddressId: pickupAddress.id,
+              deliveryAddressId: deliveryAddress.id,
+              vehicleType,
+              estimatedPrice: parsedPrice,
+              finalPrice: parsedPrice,
+              distance,
+              duration,
+              paymentMethod,
+              status: 'SEARCHING_DRIVER',
+              otp: generateDeliveryOtp(),
+            },
+            include: {
+              pickupAddress: true,
+              deliveryAddress: true,
+            },
+          });
+        });
+        break;
+      } catch (err) {
+        if (!isOrderCodeConflict(err) || attempt === 2) throw err;
+      }
+    }
 
     const isDirectTargeted = driverIds.length > 0;
     const driverWhere = isDirectTargeted
