@@ -84,16 +84,10 @@ router.get('/:bookingId/unread', async (req, res, next) => {
 // Predefined quick messages
 router.get('/:bookingId/quick-messages', async (req, res, next) => {
   try {
-    const quickMessages = [
-      'I am at the pickup location',
-      'Please come to the gate',
-      'I am running late, please wait',
-      'Can you call me?',
-      'Package is fragile, please handle with care',
-      'I will be there in 5 minutes',
-      'Where are you exactly?',
-      'Thank you!',
-    ];
+    const quickMessages = (process.env.CHAT_QUICK_MESSAGES || '')
+      .split('|')
+      .map((item) => item.trim())
+      .filter(Boolean);
     res.json({ success: true, data: quickMessages });
   } catch (err) {
     next(err);

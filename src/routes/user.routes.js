@@ -32,6 +32,34 @@ router.get('/me', async (req, res, next) => {
   }
 });
 
+// GET /api/users/me/stats
+router.get('/me/stats', async (req, res, next) => {
+  try {
+    const userId = req.user.userId;
+    console.log('[user] GET /me/stats — userId:', userId);
+
+    const [bookingCount, ratingResult] = await Promise.all([
+      prisma.booking.count({ where: { userId } }),
+      prisma.order.aggregate({
+        where: { booking: { userId }, rating: { not: null } },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        totalShipments: bookingCount,
+        userRating: ratingResult._avg.rating || 0,
+        ratingCount: ratingResult._count.rating || 0,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PUT /api/users/me
 router.put('/me', async (req, res, next) => {
   try {
