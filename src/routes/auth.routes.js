@@ -12,6 +12,11 @@ const maskEmail = (email = '') => {
   return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
 };
 
+const getBearerToken = (header = '') => {
+  if (!header || !header.startsWith('Bearer ')) return null;
+  return header.split(' ')[1] || null;
+};
+
 // Supabase Admin client for sending OTPs
 let _supabaseAdmin;
 function getSupabaseAdmin() {
@@ -22,6 +27,24 @@ function getSupabaseAdmin() {
     );
   }
   return _supabaseAdmin;
+}
+
+let _supabaseAuthClient;
+function getSupabaseAuthClient() {
+  if (!_supabaseAuthClient) {
+    _supabaseAuthClient = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+  }
+  return _supabaseAuthClient;
 }
 
 // POST /api/auth/send-otp — Send OTP via Supabase Auth
@@ -127,14 +150,19 @@ router.post('/verify-otp', async (req, res, next) => {
       return next(new AppError('Incorrect or expired code. Please try again.', 400));
     }
 
-    // Get the Supabase session token
+    // Get the Supabase session tokens
     const token = data.session?.access_token;
-    if (!token) {
-      console.error('[auth] verify-otp failed: missing access token in Supabase response', {
+    const refreshToken = data.session?.refresh_token;
+    const expiresIn = data.session?.expires_in;
+    if (!token || !refreshToken || !expiresIn) {
+      console.error('[auth] verify-otp failed: missing session tokens in Supabase response', {
         email: maskEmail(email),
         mode,
         hasSession: !!data.session,
         hasUser: !!data.user,
+        hasAccessToken: !!token,
+        hasRefreshToken: !!refreshToken,
+        hasExpiresIn: expiresIn != null,
       });
       return next(new AppError('Verification failed. Please try again.', 500));
     }
@@ -155,11 +183,105 @@ router.post('/verify-otp', async (req, res, next) => {
     }
 
     console.log(`[auth] OTP verified for ${maskEmail(email)} (mode=${mode})`);
-    res.json({ success: true, message: 'OTP verified successfully.', token, user, isNewUser });
+    res.json({
+      success: true,
+      message: 'OTP verified successfully.',
+      token,
+      refreshToken,
+      expiresIn,
+      user,
+      isNewUser,
+    });
   } catch (err) {
     console.error('[auth] verify-otp failed: unexpected error', {
       email: maskEmail(email),
       mode,
+      message: err.message,
+      stack: err.stack,
+    });
+    next(err);
+  }
+});
+
+// POST /api/auth/refresh — Exchange refresh token for a new session
+router.post('/refresh', async (req, res, next) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken || typeof refreshToken !== 'string') {
+    console.error('[auth] refresh failed: missing refresh token', {
+      path: req.originalUrl,
+      ip: req.ip,
+    });
+    return next(new AppError('Refresh token is required.', 400));
+  }
+
+  try {
+    const { data, error } = await getSupabaseAuthClient().auth.refreshSession({
+      refresh_token: refreshToken,
+    });
+
+    if (error) {
+      console.error('[auth] refresh failed: Supabase refresh error', {
+        message: error.message,
+        status: error.status ?? null,
+        code: error.code ?? null,
+      });
+      return next(new AppError('Session refresh failed. Please log in again.', 401));
+    }
+
+    const token = data.session?.access_token;
+    const nextRefreshToken = data.session?.refresh_token;
+    const expiresIn = data.session?.expires_in;
+    if (!token || !nextRefreshToken || !expiresIn) {
+      console.error('[auth] refresh failed: missing session tokens in Supabase response', {
+        hasSession: !!data.session,
+        hasAccessToken: !!token,
+        hasRefreshToken: !!nextRefreshToken,
+        hasExpiresIn: expiresIn != null,
+      });
+      return next(new AppError('Session refresh failed. Please log in again.', 401));
+    }
+
+    res.json({
+      success: true,
+      message: 'Session refreshed successfully.',
+      token,
+      refreshToken: nextRefreshToken,
+      expiresIn,
+    });
+  } catch (err) {
+    console.error('[auth] refresh failed: unexpected error', {
+      message: err.message,
+      stack: err.stack,
+    });
+    next(err);
+  }
+});
+
+// POST /api/auth/logout — Revoke current refresh tokens for this session
+router.post('/logout', authenticateToken, async (req, res, next) => {
+  const accessToken = getBearerToken(req.headers.authorization);
+  if (!accessToken) {
+    return next(new AppError('Authentication required', 401));
+  }
+
+  try {
+    const { error } = await getSupabaseAdmin().auth.admin.signOut(accessToken, 'global');
+
+    if (error && ![401, 403, 404].includes(error.status ?? 0)) {
+      console.error('[auth] logout failed: Supabase signOut error', {
+        email: maskEmail(req.user?.email),
+        message: error.message,
+        status: error.status ?? null,
+        code: error.code ?? null,
+      });
+      return next(new AppError('Logout failed. Please try again.', 500));
+    }
+
+    res.json({ success: true, message: 'Logged out successfully.' });
+  } catch (err) {
+    console.error('[auth] logout failed: unexpected error', {
+      email: maskEmail(req.user?.email),
       message: err.message,
       stack: err.stack,
     });

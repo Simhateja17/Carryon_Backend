@@ -39,6 +39,7 @@ const walletLimiter = rateLimit({
 });
 app.use('/api/auth/send-otp', authLimiter);
 app.use('/api/auth/verify-otp', authLimiter);
+app.use('/api/auth/refresh', authLimiter);
 app.use('/api/wallet/topup', walletLimiter);
 app.use('/api/wallet/pay', walletLimiter);
 
