@@ -32,7 +32,7 @@ router.post('/:bookingId', async (req, res, next) => {
     }
 
     const price = booking.finalPrice || booking.estimatedPrice;
-    const taxRate = 0.06; // 6% SST Malaysia
+    const taxRate = 0.05;
     const subtotal = Math.round((price / (1 + taxRate)) * 100) / 100;
     const tax = Math.round((price - subtotal) * 100) / 100;
 

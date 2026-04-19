@@ -101,7 +101,7 @@ router.post('/ride-request', async (req, res, next) => {
       return next(new AppError('price must be a valid number greater than 0', 400));
     }
 
-    const validVehicleTypes = ['BIKE', 'CAR', 'VAN', 'TRUCK'];
+    const validVehicleTypes = ['BIKE', 'CAR', 'PICKUP', 'VAN_7FT', 'VAN_9FT', 'LORRY_10FT', 'LORRY_14FT', 'LORRY_17FT'];
     if (!validVehicleTypes.includes(vehicleType)) {
       return next(new AppError(`Invalid vehicleType. Must be one of: ${validVehicleTypes.join(', ')}`, 400));
     }

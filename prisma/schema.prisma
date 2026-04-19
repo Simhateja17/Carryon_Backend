@@ -90,8 +90,12 @@ enum DocumentStatus {
 enum DriverVehicleType {
   BIKE
   CAR
-  VAN
-  TRUCK
+  PICKUP
+  VAN_7FT
+  VAN_9FT
+  LORRY_10FT
+  LORRY_14FT
+  LORRY_17FT
 }
 
 enum DriverTransactionType {
