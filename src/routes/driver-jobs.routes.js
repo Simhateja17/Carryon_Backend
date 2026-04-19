@@ -56,6 +56,15 @@ function toDriverStatus(bookingStatus, extraData) {
   }
 }
 
+function isSettlementEligibleBooking(booking) {
+  return (
+    booking.status === 'DELIVERED' &&
+    !!booking.deliveredAt &&
+    !!booking.deliveryOtpVerifiedAt &&
+    booking.paymentStatus === 'COMPLETED'
+  );
+}
+
 // Common include for booking queries
 const bookingInclude = {
   pickupAddress: true,
@@ -66,6 +75,7 @@ const bookingInclude = {
 // Transform a booking into a DeliveryJob shape for the driver app
 function toDeliveryJob(booking) {
   const expiresAt = new Date(booking.createdAt.getTime() + OFFER_EXPIRY_MS);
+  const proofConfirmed = !!booking.deliveryProofUrl || !!booking.deliveryOtpVerifiedAt || !!booking.deliveredAt;
   return {
     id: booking.id,
     displayOrderId: booking.orderCode || booking.id,
@@ -105,13 +115,15 @@ function toDeliveryJob(booking) {
     deliveredAt: booking.deliveredAt?.toISOString() || null,
     completedAt: booking.deliveredAt?.toISOString() || null,
     notes: '',
-    proofOfDelivery: booking.deliveryProofUrl ? {
-      photoUrl: booking.deliveryProofUrl,
-      signatureUrl: null,
-      otpCode: null,
-      deliveredAt: booking.deliveredAt?.toISOString() || null,
-      recipientName: null,
-    } : null,
+    proofOfDelivery: proofConfirmed
+      ? {
+        photoUrl: booking.deliveryProofUrl || null,
+        signatureUrl: null,
+        otpCode: null,
+        deliveredAt: booking.deliveredAt?.toISOString() || null,
+        recipientName: booking.deliveryAddress?.contactName || booking.user?.name || null,
+      }
+      : null,
   };
 }
 
@@ -252,13 +264,16 @@ router.get('/scheduled', async (req, res, next) => {
   }
 });
 
-// GET /api/driver/jobs/completed — delivered/cancelled bookings
+// GET /api/driver/jobs/completed — only settled, handover-confirmed deliveries
 router.get('/completed', async (req, res, next) => {
   try {
     const bookings = await prisma.booking.findMany({
       where: {
         driverId: req.driver.id,
-        status: { in: ['DELIVERED', 'CANCELLED'] },
+        status: 'DELIVERED',
+        deliveredAt: { not: null },
+        deliveryOtpVerifiedAt: { not: null },
+        paymentStatus: 'COMPLETED',
       },
       include: bookingInclude,
       orderBy: { updatedAt: 'desc' },
@@ -384,6 +399,9 @@ router.put('/:id/status', async (req, res, next) => {
     const backendStatus = STATUS_MAP[status];
     if (!backendStatus) {
       return next(new AppError(`Invalid status: ${status}`, 400));
+    }
+    if (backendStatus === 'DELIVERED') {
+      return next(new AppError('Use proof submission to complete delivery', 400));
     }
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
@@ -513,6 +531,9 @@ router.post('/:id/proof', async (req, res, next) => {
     if (!booking) return next(new AppError('Job not found', 404));
     if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
     if (booking.status === 'DELIVERED') {
+      if (!isSettlementEligibleBooking(booking)) {
+        return next(new AppError('Delivered booking is missing handover verification', 409));
+      }
       const alreadyDelivered = await prisma.booking.findUnique({
         where: { id: req.params.id },
         include: bookingInclude,
