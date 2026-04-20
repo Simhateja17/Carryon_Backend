@@ -27,13 +27,13 @@ async function googleMapsFetch(url, method = 'GET', body = null, headers = {}) {
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error(`[Google Maps] ✗ ${method} — ${response.status} (${elapsed}ms): ${errText}`);
+    console.error(`[Google Maps]  ${method} — ${response.status} (${elapsed}ms): ${errText}`);
     const err = new Error(`Google Maps API error (${response.status}): ${errText}`);
     err.statusCode = response.status;
     throw err;
   }
 
-  console.log(`[Google Maps] ✓ ${method} — ${response.status} (${elapsed}ms)`);
+  console.log(`[Google Maps]  ${method} — ${response.status} (${elapsed}ms)`);
 
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {

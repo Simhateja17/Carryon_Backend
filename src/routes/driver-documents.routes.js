@@ -28,6 +28,31 @@ function getSupabase() {
   return _supabase;
 }
 
+const VALID_DOCUMENT_TYPES = new Set([
+  'DRIVERS_LICENSE',
+  'DRIVERS_LICENSE_BACK',
+  'GDL',
+  'VEHICLE_REGISTRATION',
+  'ROAD_TAX',
+  'PUSPAKOM',
+  'APAD_PERMIT',
+  'VEHICLE_PHOTO_FRONT',
+  'VEHICLE_PHOTO_BACK',
+  'VEHICLE_PHOTO_LEFT',
+  'VEHICLE_PHOTO_RIGHT',
+  'VEHICLE_PHOTO_INTERIOR',
+  'BANK_STATEMENT',
+  'POLICE_CLEARANCE',
+  'INSURANCE',
+  'PROFILE_PHOTO',
+  'ID_PROOF',
+  'MYKAD_FRONT',
+  'MYKAD_BACK',
+  'SELFIE',
+  'PASSPORT',
+  'WORK_PERMIT_PLKS',
+]);
+
 // POST /api/driver/documents — upload a document
 // Supports two modes:
 // 1. Multipart form upload (image file + type) - backend uploads to Supabase
@@ -36,6 +61,7 @@ router.post('/', upload.single('image'), async (req, res, next) => {
   try {
     let imageUrl;
     let type;
+    let expiryDate = null;
     console.log('[driver-documents] POST upload — driverId:', req.driver.id);
 
     // Check if this is a JSON request (image already uploaded to Supabase)
@@ -43,6 +69,7 @@ router.post('/', upload.single('image'), async (req, res, next) => {
       // Mode 2: JSON body with imageUrl
       type = req.body.type;
       imageUrl = req.body.imageUrl;
+      expiryDate = req.body.expiryDate || null;
 
       if (!imageUrl) return next(new AppError('imageUrl is required', 400));
       if (!type) return next(new AppError('Document type is required', 400));
@@ -74,15 +101,24 @@ router.post('/', upload.single('image'), async (req, res, next) => {
       imageUrl = urlData.publicUrl;
     }
 
-    const validTypes = ['DRIVERS_LICENSE', 'VEHICLE_REGISTRATION', 'INSURANCE', 'PROFILE_PHOTO', 'ID_PROOF'];
-    if (!validTypes.includes(type)) {
+    if (!VALID_DOCUMENT_TYPES.has(type)) {
       return next(new AppError('Invalid document type', 400));
     }
 
     const document = await prisma.driverDocument.upsert({
       where: { driverId_type: { driverId: req.driver.id, type } },
-      update: { imageUrl: imageUrl, status: 'PENDING', rejectionReason: null },
-      create: { driverId: req.driver.id, type, imageUrl: imageUrl },
+      update: {
+        imageUrl,
+        expiryDate,
+        status: 'PENDING',
+        rejectionReason: null,
+      },
+      create: {
+        driverId: req.driver.id,
+        type,
+        imageUrl,
+        expiryDate,
+      },
     });
     console.log('[driver-documents] document upserted — driverId:', req.driver.id, 'type:', type, 'docId:', document.id, 'status:', document.status);
 
@@ -131,7 +167,12 @@ router.put('/:id', upload.single('image'), async (req, res, next) => {
 
     const updated = await prisma.driverDocument.update({
       where: { id: req.params.id },
-      data: { imageUrl: urlData.publicUrl, status: 'PENDING', rejectionReason: null },
+      data: {
+        imageUrl: urlData.publicUrl,
+        expiryDate: req.body.expiryDate || doc.expiryDate,
+        status: 'PENDING',
+        rejectionReason: null,
+      },
     });
 
     res.json({ success: true, data: updated });

@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { sendPushNotifications } = require('../lib/firebase');
 const { haversineKm } = require('../lib/distance');
+const { OTP_LENGTH, generateOtp, isValidOtp, normalizeOtp } = require('../lib/otp');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
 
@@ -15,10 +16,6 @@ const bookingIncludes = {
   deliveryAddress: true,
   driver: true,
 };
-
-function generateDeliveryOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
 
 function nextOrderCodeFromLast(lastOrderCode) {
   const match = /^ORD-(\d+)$/.exec(lastOrderCode || '');
@@ -105,7 +102,7 @@ router.post('/', async (req, res, next) => {
               distance: distance || 0,
               duration: duration || 0,
               paymentMethod: paymentMethod || 'CASH',
-              otp: generateDeliveryOtp(),
+              otp: generateOtp(),
               dispatchSource: 'USER_APP',
               status: 'SEARCHING_DRIVER',
             },
@@ -203,7 +200,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
   try {
     const { otp, deliveryProofUrl } = req.body;
     console.log('[booking] POST verify-delivery — userId:', req.user.userId, 'bookingId:', req.params.id);
-    if (!otp) return next(new AppError('OTP is required', 400));
+    if (!isValidOtp(otp)) return next(new AppError(`OTP must be ${OTP_LENGTH} digits`, 400));
 
     const booking = await prisma.booking.findUnique({
       where: { id: req.params.id },
@@ -218,8 +215,9 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       return next(new AppError('Booking is cancelled', 400));
     }
 
+    const normalizedOtp = normalizeOtp(otp);
     const expectedOtp = booking.deliveryOtp || booking.otp;
-    if (expectedOtp !== otp) {
+    if (expectedOtp !== normalizedOtp) {
       console.log('[booking] verify-delivery — OTP mismatch for bookingId:', req.params.id);
       return next(new AppError('Invalid delivery OTP', 400));
     }

@@ -3,14 +3,11 @@ const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { sendPushNotifications } = require('../lib/firebase');
 const { haversineKm } = require('../lib/distance');
+const { generateOtp } = require('../lib/otp');
 
 const router = Router();
 const DRIVER_SEARCH_RADIUS_KM = 10;
 const FALLBACK_TEST_USER_EMAIL = 'admin.test.rider@carryon.local';
-
-function generateDeliveryOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
 
 function nextOrderCodeFromLast(lastOrderCode) {
   const match = /^ORD-(\d+)$/.exec(lastOrderCode || '');
@@ -182,7 +179,7 @@ router.post('/ride-request', async (req, res, next) => {
               duration,
               paymentMethod,
               status: 'SEARCHING_DRIVER',
-              otp: generateDeliveryOtp(),
+              otp: generateOtp(),
               dispatchSource: 'ADMIN',
             },
             include: {

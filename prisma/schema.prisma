@@ -75,10 +75,27 @@ enum DriverVerificationStatus {
 
 enum DocumentType {
   DRIVERS_LICENSE
+  DRIVERS_LICENSE_BACK
+  GDL
   VEHICLE_REGISTRATION
+  ROAD_TAX
+  PUSPAKOM
+  APAD_PERMIT
+  VEHICLE_PHOTO_FRONT
+  VEHICLE_PHOTO_BACK
+  VEHICLE_PHOTO_LEFT
+  VEHICLE_PHOTO_RIGHT
+  VEHICLE_PHOTO_INTERIOR
+  BANK_STATEMENT
+  POLICE_CLEARANCE
   INSURANCE
   PROFILE_PHOTO
   ID_PROOF
+  MYKAD_FRONT
+  MYKAD_BACK
+  SELFIE
+  PASSPORT
+  WORK_PERMIT_PLKS
 }
 
 enum DocumentStatus {
@@ -248,6 +265,7 @@ model DriverDocument {
   driverId        String
   type            DocumentType
   imageUrl        String
+  expiryDate      String?
   status          DocumentStatus @default(PENDING)
   rejectionReason String?
   uploadedAt      DateTime       @default(now())

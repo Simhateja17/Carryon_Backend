@@ -4,6 +4,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
+const { OTP_LENGTH, generateOtp, isValidOtp, normalizeOtp } = require('../lib/otp');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
 const OFFER_EXPIRY_MS = 60 * 1000;
@@ -19,7 +20,6 @@ const maskEmail = (email = '') => {
   const visible = local.slice(0, 2);
   return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
 };
-const generateDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000).toString();
 let _supabaseAdmin;
 function getSupabaseAdmin() {
   if (!_supabaseAdmin) {
@@ -356,7 +356,7 @@ router.post('/:id/accept', async (req, res, next) => {
       include: bookingInclude,
     });
     if (!updated) return next(new AppError('Job not found', 404));
-    console.log('[driver-jobs] ✔ Accepted — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'customer:', booking.user?.name || 'unknown', 'status → DRIVER_ASSIGNED');
+    console.log('[driver-jobs]  Accepted — driver:', driverLabel(req.driver), 'bookingId:', req.params.id, 'customer:', booking.user?.name || 'unknown', 'status → DRIVER_ASSIGNED');
 
     await prisma.driverNotification.create({
       data: {
@@ -426,7 +426,7 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
   try {
     const { otp } = req.body;
     console.log('[driver-jobs] POST verify-pickup-otp — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
-    if (!otp) return next(new AppError('OTP is required', 400));
+    if (!isValidOtp(otp)) return next(new AppError(`OTP must be ${OTP_LENGTH} digits`, 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Job not found', 404));
@@ -434,7 +434,8 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
     if (booking.status !== 'DRIVER_ARRIVED') {
       return next(new AppError('OTP verification is only allowed when driver has arrived at pickup', 400));
     }
-    if (booking.otp !== otp) {
+    const normalizedOtp = normalizeOtp(otp);
+    if (booking.otp !== normalizedOtp) {
       console.log('[driver-jobs] verify-pickup-otp — OTP mismatch — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
       return next(new AppError('Invalid OTP', 400));
     }
@@ -467,7 +468,7 @@ router.post('/:id/request-delivery-otp', async (req, res, next) => {
     }
 
     const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
-    const generatedOtp = generateDeliveryOtp();
+    const generatedOtp = generateOtp();
     const updateData = {
       deliveryOtpSentAt: new Date(),
       deliveryOtpVerifiedAt: null,
@@ -540,10 +541,10 @@ router.post('/:id/proof', async (req, res, next) => {
       });
       return res.json({ success: true, data: toDeliveryJob(alreadyDelivered) });
     }
-    if (!otpCode || String(otpCode).trim().length < 4) {
-      return next(new AppError('Recipient OTP is required', 400));
+    if (!isValidOtp(otpCode)) {
+      return next(new AppError(`Recipient OTP must be ${OTP_LENGTH} digits`, 400));
     }
-    const normalizedOtp = String(otpCode).trim();
+    const normalizedOtp = normalizeOtp(otpCode);
     const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
 
     if (booking.dispatchSource === 'ADMIN') {
