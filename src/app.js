@@ -66,7 +66,6 @@ app.use('/api/invoices', require('./routes/invoice.routes'));
 app.use('/api/driver/auth', require('./routes/driver-auth.routes'));
 app.use('/api/driver/profile', require('./routes/driver-profile.routes'));
 app.use('/api/driver/documents', require('./routes/driver-documents.routes'));
-app.use('/api/driver/upload', require('./routes/driver-upload.routes'));
 app.use('/api/driver/vehicle', require('./routes/driver-vehicle.routes'));
 app.use('/api/driver/jobs', require('./routes/driver-jobs.routes'));
 app.use('/api/driver/earnings', require('./routes/driver-earnings.routes'));
