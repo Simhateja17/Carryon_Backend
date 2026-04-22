@@ -2,8 +2,11 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
-const { sendPushNotifications } = require('../lib/firebase');
 const { haversineKm } = require('../lib/distance');
+const {
+  sendPushToDriverIds,
+  notifyUserBookingEvent,
+} = require('../lib/pushNotifications');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
 
@@ -122,13 +125,13 @@ router.post('/', async (req, res, next) => {
 
     // Fire-and-forget FCM push to nearby online drivers with matching vehicle type
     prisma.driver.findMany({
-      where: { isOnline: true, fcmToken: { not: null } },
-      select: { id: true, name: true, fcmToken: true, currentLatitude: true, currentLongitude: true, vehicle: { select: { type: true } } },
+      where: { isOnline: true },
+      select: { id: true, name: true, currentLatitude: true, currentLongitude: true, vehicle: { select: { type: true } } },
     }).then((drivers) => {
       const pickupLat = booking.pickupAddress.latitude;
       const pickupLng = booking.pickupAddress.longitude;
       const bookingVehicleType = booking.vehicleType;
-      console.log('[booking] FCM driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers with token:', drivers.length);
+      console.log('[booking] FCM driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers:', drivers.length);
       const nearbyDrivers = drivers.filter(d => {
         const withinRadius = haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
         const vehicleMatches = !bookingVehicleType || !d.vehicle?.type || d.vehicle.type === bookingVehicleType;
@@ -136,17 +139,26 @@ router.post('/', async (req, res, next) => {
       });
       console.log('[booking] FCM nearby drivers (within', DRIVER_SEARCH_RADIUS_KM, 'km):', nearbyDrivers.length,
         '| notifying:', nearbyDrivers.map(d => d.name));
-      const nearbyTokens = nearbyDrivers.map(d => d.fcmToken);
-      if (nearbyTokens.length === 0) {
+      const nearbyDriverIds = nearbyDrivers.map((driver) => driver.id);
+      if (nearbyDriverIds.length === 0) {
         console.log('[booking] FCM — no nearby drivers found for booking:', booking.id);
         return;
       }
-      return sendPushNotifications(
-        nearbyTokens,
+      return sendPushToDriverIds(
+        nearbyDriverIds,
         { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },
         { type: 'JOB_REQUEST', bookingId: booking.id }
       ).then((result) => {
-        console.log('[booking] FCM push sent for booking', booking.id, '— successCount:', result?.successCount, 'failureCount:', result?.failureCount);
+        console.log(
+          '[booking] FCM push sent for booking',
+          booking.id,
+          '— successCount:',
+          result?.successCount,
+          'failureCount:',
+          result?.failureCount,
+          'noDeviceDrivers:',
+          result?.noDeviceActorIds?.length || 0
+        );
       });
     }).catch((err) => {
       console.error('[booking] FCM push to drivers failed:', err.message);
@@ -254,6 +266,8 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       });
     }
 
+    await notifyUserBookingEvent(updatedBooking, 'DELIVERED');
+
     res.json({ success: true, data: updatedBooking, message: 'Delivery verified successfully' });
   } catch (err) {
     next(err);
@@ -312,6 +326,8 @@ router.put('/:id/status', async (req, res, next) => {
       include: bookingIncludes,
     });
     console.log('[booking] Status updated — bookingId:', req.params.id, booking.status, '→', updatedBooking.status);
+
+    await notifyUserBookingEvent(updatedBooking, updatedBooking.status);
 
     res.json({ success: true, data: updatedBooking });
   } catch (err) {
@@ -428,6 +444,8 @@ router.post('/:id/cancel', async (req, res, next) => {
         ]);
       }
     }
+
+    await notifyUserBookingEvent(updatedBooking, 'CANCELLED');
 
     res.json({ success: true, data: updatedBooking, message: 'Booking cancelled successfully' });
   } catch (err) {

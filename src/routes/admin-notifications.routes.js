@@ -1,8 +1,8 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
-const { sendPushNotifications } = require('../lib/firebase');
 const { haversineKm } = require('../lib/distance');
+const { sendPushToDriverIds } = require('../lib/pushNotifications');
 
 const router = Router();
 const DRIVER_SEARCH_RADIUS_KM = 10;
@@ -208,7 +208,6 @@ router.post('/ride-request', async (req, res, next) => {
         id: true,
         name: true,
         email: true,
-        fcmToken: true,
         currentLatitude: true,
         currentLongitude: true,
         vehicle: { select: { type: true } },
@@ -251,20 +250,19 @@ router.post('/ride-request', async (req, res, next) => {
       });
     }
 
-    const driversWithToken = nearbyDrivers.filter((d) => d.fcmToken != null && d.fcmToken.length > 0);
-    const driversWithoutToken = nearbyDrivers.filter((d) => !d.fcmToken || d.fcmToken.length === 0);
-    const fcmTokens = driversWithToken.map((d) => d.fcmToken);
-
     let pushResult = {
       successCount: 0,
       failureCount: 0,
       failedTokens: [],
       invalidTokens: [],
       cleanedInvalidTokens: 0,
+      deliveredActorIds: [],
+      failedActorIds: [],
+      noDeviceActorIds: [],
     };
-    if (fcmTokens.length > 0) {
-      pushResult = await sendPushNotifications(
-        fcmTokens,
+    if (nearbyDrivers.length > 0) {
+      pushResult = await sendPushToDriverIds(
+        nearbyDrivers.map((driver) => driver.id),
         {
           title: 'New Ride Request!',
           body: `${booking.pickupAddress.address} → ${booking.deliveryAddress.address}`,
@@ -278,15 +276,15 @@ router.post('/ride-request', async (req, res, next) => {
       );
     }
 
-    const failedTokenSet = new Set(pushResult.failedTokens);
-    const deliveredDrivers = driversWithToken
-      .filter((d) => !failedTokenSet.has(d.fcmToken))
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
-    const failedDrivers = driversWithToken
-      .filter((d) => failedTokenSet.has(d.fcmToken))
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
-    const noTokenDrivers = driversWithoutToken
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
+    const deliveredDrivers = nearbyDrivers
+      .filter((driver) => pushResult.deliveredActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
+    const failedDrivers = nearbyDrivers
+      .filter((driver) => pushResult.failedActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
+    const noTokenDrivers = nearbyDrivers
+      .filter((driver) => pushResult.noDeviceActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
 
     res.status(201).json({
       success: true,
@@ -300,12 +298,12 @@ router.post('/ride-request', async (req, res, next) => {
         targetedDrivers,
         targetingMode: isDirectTargeted ? 'selected_drivers' : 'nearby_online_drivers',
         push: {
-          attempted: fcmTokens.length,
+          attempted: pushResult.devices?.length || 0,
           delivered: pushResult.successCount,
           failed: pushResult.failureCount,
           invalidTokens: pushResult.invalidTokens.length,
           cleanedInvalidTokens: pushResult.cleanedInvalidTokens,
-          driversWithoutToken: driversWithoutToken.length,
+          driversWithoutToken: noTokenDrivers.length,
           deliveredDrivers,
           failedDrivers,
           noTokenDrivers,
@@ -340,7 +338,7 @@ router.post('/send', async (req, res, next) => {
 
     const drivers = await prisma.driver.findMany({
       where: whereClause,
-      select: { id: true, name: true, email: true, fcmToken: true },
+      select: { id: true, name: true, email: true },
     });
     console.log('[admin-notifications] send — audience:', audience, 'drivers targeted:', drivers.length);
 
@@ -359,36 +357,35 @@ router.post('/send', async (req, res, next) => {
     });
 
     // Send actual FCM push notifications to drivers who have tokens
-    const driversWithToken = drivers.filter((d) => d.fcmToken != null && d.fcmToken.length > 0);
-    const driversWithoutToken = drivers.filter((d) => !d.fcmToken || d.fcmToken.length === 0);
-    const fcmTokens = driversWithToken.map((d) => d.fcmToken);
-
     let pushResult = {
       successCount: 0,
       failureCount: 0,
       failedTokens: [],
       invalidTokens: [],
       cleanedInvalidTokens: 0,
+      deliveredActorIds: [],
+      failedActorIds: [],
+      noDeviceActorIds: [],
     };
-    if (fcmTokens.length > 0) {
-      console.log('[admin-notifications] send — sending FCM to', fcmTokens.length, 'tokens');
-      pushResult = await sendPushNotifications(
-        fcmTokens,
+    if (drivers.length > 0) {
+      console.log('[admin-notifications] send — sending FCM to', drivers.length, 'drivers');
+      pushResult = await sendPushToDriverIds(
+        drivers.map((driver) => driver.id),
         { title, body: message },
         { type, source: 'admin' }
       );
       console.log('[admin-notifications] FCM result — successCount:', pushResult.successCount, 'failureCount:', pushResult.failureCount);
     }
 
-    const failedTokenSet = new Set(pushResult.failedTokens);
-    const deliveredDrivers = driversWithToken
-      .filter((d) => !failedTokenSet.has(d.fcmToken))
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
-    const failedDrivers = driversWithToken
-      .filter((d) => failedTokenSet.has(d.fcmToken))
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
-    const noTokenDrivers = driversWithoutToken
-      .map((d) => ({ id: d.id, name: d.name, email: d.email }));
+    const deliveredDrivers = drivers
+      .filter((driver) => pushResult.deliveredActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
+    const failedDrivers = drivers
+      .filter((driver) => pushResult.failedActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
+    const noTokenDrivers = drivers
+      .filter((driver) => pushResult.noDeviceActorIds.includes(driver.id))
+      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
 
     res.json({
       success: true,
@@ -397,12 +394,12 @@ router.post('/send', async (req, res, next) => {
         audience,
         driversCount: drivers.length,
         push: {
-          attempted: fcmTokens.length,
+          attempted: pushResult.devices?.length || 0,
           delivered: pushResult.successCount,
           failed: pushResult.failureCount,
           invalidTokens: pushResult.invalidTokens.length,
           cleanedInvalidTokens: pushResult.cleanedInvalidTokens,
-          driversWithoutToken: driversWithoutToken.length,
+          driversWithoutToken: noTokenDrivers.length,
           deliveredDrivers,
           failedDrivers,
           noTokenDrivers,
@@ -427,7 +424,11 @@ router.get('/drivers', async (req, res, next) => {
         isVerified: true,
         totalTrips: true,
         rating: true,
-        fcmToken: true,
+        pushDevices: {
+          where: { notificationsEnabled: true },
+          select: { id: true },
+          take: 1,
+        },
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -435,7 +436,7 @@ router.get('/drivers', async (req, res, next) => {
 
     res.json({
       success: true,
-      data: drivers.map((d) => ({ ...d, hasFcmToken: !!d.fcmToken, fcmToken: undefined })),
+      data: drivers.map((d) => ({ ...d, hasFcmToken: d.pushDevices.length > 0, pushDevices: undefined })),
     });
   } catch (err) {
     next(err);

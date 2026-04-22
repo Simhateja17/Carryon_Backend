@@ -2,6 +2,11 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const {
+  parsePushRegistrationBody,
+  upsertPushDevice,
+  removePushDevice,
+} = require('../lib/pushDevices');
 
 const router = Router();
 router.use(authenticate);
@@ -76,6 +81,52 @@ router.put('/me', async (req, res, next) => {
     });
     console.log('[user] PUT /me — updated userId:', user.id);
     res.json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/users/me/push-token — register or refresh a push token for this device
+router.put('/me/push-token', async (req, res, next) => {
+  try {
+    const { token, deviceId, platform, appVersion } = parsePushRegistrationBody(req.body, 'ANDROID');
+    await upsertPushDevice({
+      actorType: 'user',
+      actorId: req.user.userId,
+      token,
+      deviceId,
+      platform,
+      appVersion,
+    });
+    res.json({
+      success: true,
+      data: { tokenRegistered: true, deviceId, platform },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/users/me/push-token — remove a device registration
+router.delete('/me/push-token', async (req, res, next) => {
+  try {
+    const deviceId = typeof req.body?.deviceId === 'string'
+      ? req.body.deviceId.trim()
+      : typeof req.query?.deviceId === 'string'
+        ? String(req.query.deviceId).trim()
+        : '';
+
+    if (!deviceId) {
+      return next(new AppError('deviceId field is required', 400));
+    }
+
+    await removePushDevice({
+      actorType: 'user',
+      actorId: req.user.userId,
+      deviceId,
+    });
+
+    res.json({ success: true, data: { tokenRegistered: false, deviceId } });
   } catch (err) {
     next(err);
   }

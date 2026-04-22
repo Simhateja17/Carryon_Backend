@@ -12,6 +12,11 @@ router.get('/', async (req, res, next) => {
       include: {
         documents: { select: { id: true, type: true, status: true } },
         vehicle: { select: { id: true, type: true, make: true, model: true } },
+        pushDevices: {
+          where: { notificationsEnabled: true },
+          select: { id: true },
+          take: 1,
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -34,7 +39,7 @@ router.get('/', async (req, res, next) => {
         createdAt: d.createdAt,
         documentsCount: d.documents.length,
         documentsApproved: d.documents.filter((doc) => doc.status === 'APPROVED').length,
-        hasFcmToken: !!d.fcmToken,
+        hasFcmToken: d.pushDevices.length > 0,
         hasVehicle: !!d.vehicle,
         vehicleSummary: d.vehicle
           ? `${d.vehicle.type} — ${d.vehicle.make} ${d.vehicle.model}`

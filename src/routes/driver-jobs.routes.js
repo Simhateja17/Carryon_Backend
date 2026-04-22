@@ -4,6 +4,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
+const { notifyUserBookingEvent } = require('../lib/pushNotifications');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
 const OFFER_EXPIRY_MS = 60 * 1000;
@@ -367,6 +368,8 @@ router.post('/:id/accept', async (req, res, next) => {
       },
     });
 
+    await notifyUserBookingEvent(updated, 'DRIVER_ASSIGNED');
+
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
     next(err);
@@ -415,6 +418,8 @@ router.put('/:id/status', async (req, res, next) => {
     });
     console.log('[driver-jobs] Status updated — driver:', driverLabel(req.driver), 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'mapped:', status, '→', backendStatus);
 
+    await notifyUserBookingEvent(updated, backendStatus);
+
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
     next(err);
@@ -445,6 +450,8 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
       include: bookingInclude,
     });
     console.log('[driver-jobs] verify-pickup-otp — driver:', driverLabel(req.driver), 'customer:', updated.user?.name || 'unknown', 'bookingId:', req.params.id, 'OTP matched, status → PICKUP_DONE');
+
+    await notifyUserBookingEvent(updated, 'PICKUP_DONE');
 
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {
@@ -505,6 +512,8 @@ router.post('/:id/request-delivery-otp', async (req, res, next) => {
       'otpStoredForAdmin:',
       isAdminDispatch ? generatedOtp : '[supabase-email-otp]'
     );
+
+    await notifyUserBookingEvent(booking, 'DELIVERY_OTP_REQUESTED');
 
     res.json({
       success: true,
@@ -633,6 +642,8 @@ router.post('/:id/proof', async (req, res, next) => {
 
       return deliveredBooking;
     });
+
+    await notifyUserBookingEvent(updated, 'DELIVERED');
 
     res.json({ success: true, data: toDeliveryJob(updated) });
   } catch (err) {

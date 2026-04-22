@@ -113,6 +113,15 @@ enum DriverTransactionStatus {
   FAILED
 }
 
+enum PushPlatform {
+  ANDROID
+  IOS
+}
+
+enum PushProvider {
+  FCM
+}
+
 enum DriverNotificationType {
   JOB_REQUEST
   JOB_UPDATE
@@ -175,6 +184,7 @@ model User {
   referralsUsed  Referral[]      @relation("Referee")
   supportTickets SupportTicket[]
   invoices       Invoice[]
+  pushDevices    PushDevice[]
 }
 
 model Otp {
@@ -241,6 +251,30 @@ model Driver {
   notifications      DriverNotification[]
   supportTickets     DriverSupportTicket[]
   bookingRejections  BookingRejection[]
+  pushDevices        PushDevice[]
+}
+
+model PushDevice {
+  id                   String       @id @default(uuid())
+  userId               String?
+  driverId             String?
+  platform             PushPlatform
+  provider             PushProvider @default(FCM)
+  deviceId             String
+  token                String       @unique
+  appVersion           String?
+  notificationsEnabled Boolean      @default(true)
+  lastSeenAt           DateTime     @default(now())
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  user   User?   @relation(fields: [userId], references: [id])
+  driver Driver? @relation(fields: [driverId], references: [id])
+
+  @@unique([userId, deviceId])
+  @@unique([driverId, deviceId])
+  @@index([userId, notificationsEnabled])
+  @@index([driverId, notificationsEnabled])
 }
 
 model DriverDocument {

@@ -2,6 +2,11 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const {
+  parsePushRegistrationBody,
+  upsertPushDevice,
+  removePushDevice,
+} = require('../lib/pushDevices');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -93,16 +98,30 @@ router.put('/fcm-token', async (req, res, next) => {
 
     const normalizedToken = typeof rawToken === 'string' ? rawToken.trim() : null;
     const shouldClear = normalizedToken == null || normalizedToken.length === 0;
+    const deviceId = typeof req.body?.deviceId === 'string' && req.body.deviceId.trim()
+      ? req.body.deviceId.trim()
+      : 'legacy-driver-device';
+    const platform = typeof req.body?.platform === 'string' && req.body.platform.trim()
+      ? req.body.platform.trim().toUpperCase()
+      : 'ANDROID';
     if (shouldClear) {
       console.log('[driver-profile] PUT fcm-token — clearing token for driverId:', req.driver.id);
+      await removePushDevice({
+        actorType: 'driver',
+        actorId: req.driver.id,
+        deviceId,
+      });
     } else {
       console.log('[driver-profile] PUT fcm-token — driverId:', req.driver.id, 'token:', normalizedToken.slice(0, 10) + '...');
+      await upsertPushDevice({
+        actorType: 'driver',
+        actorId: req.driver.id,
+        token: normalizedToken,
+        deviceId,
+        platform,
+        appVersion: typeof req.body?.appVersion === 'string' ? req.body.appVersion.trim() || null : null,
+      });
     }
-
-    await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { fcmToken: shouldClear ? null : normalizedToken },
-    });
 
     res.json({ success: true, data: { fcmTokenRegistered: !shouldClear } });
   } catch (err) {
@@ -113,12 +132,64 @@ router.put('/fcm-token', async (req, res, next) => {
 // DELETE /api/driver/profile/fcm-token — explicitly clear FCM push token
 router.delete('/fcm-token', async (req, res, next) => {
   try {
-    await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { fcmToken: null },
+    const deviceId = typeof req.body?.deviceId === 'string' && req.body.deviceId.trim()
+      ? req.body.deviceId.trim()
+      : typeof req.query?.deviceId === 'string' && String(req.query.deviceId).trim()
+        ? String(req.query.deviceId).trim()
+        : 'legacy-driver-device';
+    await removePushDevice({
+      actorType: 'driver',
+      actorId: req.driver.id,
+      deviceId,
     });
     console.log('[driver-profile] DELETE fcm-token — cleared for driverId:', req.driver.id);
     res.json({ success: true, data: { fcmTokenRegistered: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/driver/profile/push-token — register or refresh a push token for this device
+router.put('/push-token', async (req, res, next) => {
+  try {
+    const { token, deviceId, platform, appVersion } = parsePushRegistrationBody(req.body, 'ANDROID');
+    await upsertPushDevice({
+      actorType: 'driver',
+      actorId: req.driver.id,
+      token,
+      deviceId,
+      platform,
+      appVersion,
+    });
+    res.json({
+      success: true,
+      data: { tokenRegistered: true, deviceId, platform },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/driver/profile/push-token — remove a device registration
+router.delete('/push-token', async (req, res, next) => {
+  try {
+    const deviceId = typeof req.body?.deviceId === 'string'
+      ? req.body.deviceId.trim()
+      : typeof req.query?.deviceId === 'string'
+        ? String(req.query.deviceId).trim()
+        : '';
+
+    if (!deviceId) {
+      return next(new AppError('deviceId field is required', 400));
+    }
+
+    await removePushDevice({
+      actorType: 'driver',
+      actorId: req.driver.id,
+      deviceId,
+    });
+
+    res.json({ success: true, data: { tokenRegistered: false, deviceId } });
   } catch (err) {
     next(err);
   }

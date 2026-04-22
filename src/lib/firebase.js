@@ -1,5 +1,5 @@
 const admin = require('firebase-admin');
-const prisma = require('./prisma');
+const { removeInvalidPushTokens } = require('./pushDevices');
 
 const INVALID_TOKEN_ERROR_CODES = new Set([
   'messaging/registration-token-not-registered',
@@ -176,13 +176,10 @@ async function sendPushNotifications(tokens, notification, data = {}) {
   results.invalidTokens = uniqueInvalidTokens;
   if (uniqueInvalidTokens.length > 0) {
     try {
-      const cleanupResult = await prisma.driver.updateMany({
-        where: { fcmToken: { in: uniqueInvalidTokens } },
-        data: { fcmToken: null },
-      });
-      results.cleanedInvalidTokens = cleanupResult.count;
+      const cleanupResult = await removeInvalidPushTokens(uniqueInvalidTokens);
+      results.cleanedInvalidTokens = cleanupResult.deletedDevices;
       console.log(
-        `[firebase] Cleared ${cleanupResult.count} invalid FCM token(s) from Driver table`
+        `[firebase] Removed ${cleanupResult.deletedDevices} invalid push device(s) and cleared ${cleanupResult.clearedLegacyDriverTokens} legacy driver token(s)`
       );
     } catch (err) {
       console.error('[firebase] Failed to cleanup invalid FCM tokens:', err.message);
