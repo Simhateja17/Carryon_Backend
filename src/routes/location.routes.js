@@ -1,10 +1,27 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticate, authenticateToken } = require('../middleware/auth');
+const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const prisma = require('../lib/prisma');
+const { haversineKm } = require('../lib/distance');
 
 const router = express.Router();
 
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+
+function fallbackRouteDistance(originLat, originLng, destLat, destLng) {
+  const directKm = haversineKm(originLat, originLng, destLat, destLng);
+  if (!Number.isFinite(directKm) || directKm <= 0) {
+    return { distance: 0, duration: 0 };
+  }
+
+  // Road routes are usually longer than straight-line distance. This also
+  // keeps fare calculation usable when Google cannot return a drive route.
+  const estimatedRoadKm = Math.round(directKm * 1.25 * 100) / 100;
+  return {
+    distance: estimatedRoadKm,
+    duration: Math.max(5, Math.round((estimatedRoadKm / 30) * 60)),
+  };
+}
 
 // Helper: make Google Maps API call
 async function googleMapsFetch(url, method = 'GET', body = null, headers = {}) {
@@ -149,12 +166,27 @@ router.post('/calculate-route', authenticateToken, async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'originLat, originLng, destLat, destLng are required' });
     }
 
+    const origin = {
+      lat: parseFloat(originLat),
+      lng: parseFloat(originLng),
+    };
+    const destination = {
+      lat: parseFloat(destLat),
+      lng: parseFloat(destLng),
+    };
+    if (
+      !Number.isFinite(origin.lat) || !Number.isFinite(origin.lng) ||
+      !Number.isFinite(destination.lat) || !Number.isFinite(destination.lng)
+    ) {
+      return res.status(400).json({ success: false, message: 'Valid coordinates are required' });
+    }
+
     const response = await googleMapsFetch(
       'https://routes.googleapis.com/directions/v2:computeRoutes',
       'POST',
       {
-        origin: { location: { latLng: { latitude: parseFloat(originLat), longitude: parseFloat(originLng) } } },
-        destination: { location: { latLng: { latitude: parseFloat(destLat), longitude: parseFloat(destLng) } } },
+        origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+        destination: { location: { latLng: { latitude: destination.lat, longitude: destination.lng } } },
         travelMode: 'DRIVE',
         polylineEncoding: 'GEO_JSON_LINESTRING',
       },
@@ -167,6 +199,7 @@ router.post('/calculate-route', authenticateToken, async (req, res, next) => {
     const route = response.routes?.[0] || {};
     const distanceMeters = route.distanceMeters || 0;
     const durationSeconds = parseInt((route.duration || '0s').replace('s', ''), 10);
+    const fallback = fallbackRouteDistance(origin.lat, origin.lng, destination.lat, destination.lng);
 
     // Debug: log what polyline keys were returned
     const polylineKeys = Object.keys(route.polyline || {});
@@ -199,9 +232,14 @@ router.post('/calculate-route', authenticateToken, async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        distance: Math.round(distanceMeters / 1000 * 100) / 100, // meters → km
-        duration: Math.round(durationSeconds / 60), // seconds → minutes
+        distance: distanceMeters > 0
+          ? Math.round(distanceMeters / 1000 * 100) / 100
+          : fallback.distance,
+        duration: durationSeconds > 0
+          ? Math.round(durationSeconds / 60)
+          : fallback.duration,
         geometry,
+        isEstimated: distanceMeters <= 0,
       },
     });
   } catch (err) {
@@ -223,24 +261,21 @@ router.get('/map-config', authenticateToken, async (req, res) => {
 });
 
 // POST /api/location/update-position
-// Body: { deviceId, latitude, longitude }
-// Persists the driver's position to the database
-router.post('/update-position', authenticateToken, async (req, res, next) => {
+// Body: { latitude, longitude }
+// Persists the authenticated driver's position to the database.
+router.post('/update-position', authenticateDriver, requireDriver, async (req, res, next) => {
   try {
-    const { deviceId, latitude, longitude } = req.body;
-    if (!deviceId || latitude == null || longitude == null) {
-      return res.status(400).json({ success: false, message: 'deviceId, latitude, longitude are required' });
+    const { latitude, longitude } = req.body;
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ success: false, message: 'Valid latitude and longitude are required' });
     }
 
-    // Try to update driver position in DB
-    try {
-      await prisma.driver.update({
-        where: { id: deviceId },
-        data: { currentLatitude: latitude, currentLongitude: longitude },
-      });
-    } catch (_) {
-      // deviceId may not be a driver — ignore
-    }
+    await prisma.driver.update({
+      where: { id: req.driver.id },
+      data: { currentLatitude: lat, currentLongitude: lng },
+    });
 
     res.json({ success: true, message: 'Position updated' });
   } catch (err) {
@@ -250,9 +285,20 @@ router.post('/update-position', authenticateToken, async (req, res, next) => {
 
 // GET /api/location/get-position/:deviceId
 // Returns the driver's last known position from the database
-router.get('/get-position/:deviceId', authenticateToken, async (req, res, next) => {
+router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
   try {
     const { deviceId } = req.params;
+    const allowedBooking = await prisma.booking.findFirst({
+      where: {
+        userId: req.user.userId,
+        driverId: deviceId,
+        status: { in: ['DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'PICKUP_DONE', 'IN_TRANSIT'] },
+      },
+      select: { id: true },
+    });
+    if (!allowedBooking) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view this driver location' });
+    }
 
     const driver = await prisma.driver.findUnique({
       where: { id: deviceId },

@@ -14,10 +14,10 @@ const app = express();
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(s => s.trim())
   : [];
-app.use(cors(allowedOrigins.length > 0 ? {
-  origin: allowedOrigins,
-  credentials: true,
-} : undefined));
+const corsOptions = allowedOrigins.length > 0
+  ? { origin: allowedOrigins, credentials: true }
+  : (process.env.NODE_ENV === 'production' ? { origin: false } : undefined);
+app.use(cors(corsOptions));
 app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '100kb' }));
@@ -37,11 +37,19 @@ const walletLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+const locationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { success: false, message: 'Too many location requests. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use('/api/auth/send-otp', authLimiter);
 app.use('/api/auth/verify-otp', authLimiter);
 app.use('/api/auth/refresh', authLimiter);
 app.use('/api/wallet/topup', walletLimiter);
 app.use('/api/wallet/pay', walletLimiter);
+app.use('/api/location', locationLimiter);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
