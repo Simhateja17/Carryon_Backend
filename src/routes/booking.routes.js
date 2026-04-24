@@ -10,6 +10,7 @@ const {
 } = require('../lib/pushNotifications');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
+const DELIVERY_OTP_TTL_MS = 10 * 60 * 1000;
 const VEHICLE_RATE_PER_KM = {
   BIKE: { regular: 0.90, priority: 1.50, pooling: 0.68 },
   CAR: { regular: 1.17, priority: 1.88, pooling: 0.88 },
@@ -39,9 +40,14 @@ const bookingIncludes = {
   deliveryAddress: true,
   driver: true,
 };
+const isEmail = (value = '') => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
 
 function generateDeliveryOtp() {
   return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+function isDeliveryOtpActive(sentAt, now = new Date()) {
+  return !!sentAt && now < new Date(new Date(sentAt).getTime() + DELIVERY_OTP_TTL_MS);
 }
 
 function money(value) {
@@ -184,13 +190,17 @@ router.post('/', async (req, res, next) => {
       vehicleType, scheduledTime, estimatedPrice,
       distance, duration, paymentMethod,
       senderName, senderPhone, receiverName, receiverPhone,
-      deliveryMode, notes
+      receiverEmail, deliveryMode, notes
     } = req.body;
 
     console.log('[booking] POST /api/bookings — userId:', req.user.userId, 'vehicleType:', vehicleType, 'paymentMethod:', paymentMethod || 'CASH', 'pickup:', pickupAddress?.address, 'delivery:', deliveryAddress?.address);
 
     if (!pickupAddress || !deliveryAddress) {
       return next(new AppError('pickupAddress and deliveryAddress are required', 400));
+    }
+    const recipientEmail = deliveryAddress.contactEmail || receiverEmail || '';
+    if (!isEmail(recipientEmail)) {
+      return next(new AppError('A valid recipient email is required for delivery OTP.', 400));
     }
     const quote = serverQuote({ pickupAddress, deliveryAddress, vehicleType, deliveryMode, estimatedPrice, distance, duration });
 
@@ -221,7 +231,7 @@ router.post('/', async (req, res, next) => {
               longitude: deliveryAddress.longitude || 0,
               contactName: deliveryAddress.contactName || receiverName || '',
               contactPhone: deliveryAddress.contactPhone || receiverPhone || '',
-              contactEmail: deliveryAddress.contactEmail || '',
+              contactEmail: recipientEmail,
               landmark: deliveryAddress.landmark || '',
               label: '',
               type: 'OTHER',
@@ -368,6 +378,9 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
     }
     if (!booking.deliveryOtpSentAt && !booking.deliveryOtp) {
       return next(new AppError('Delivery OTP has not been requested yet', 400));
+    }
+    if (!isDeliveryOtpActive(booking.deliveryOtpSentAt)) {
+      return next(new AppError('Delivery OTP expired. Please request a new code.', 400));
     }
 
     const normalizedOtp = String(otp).trim();

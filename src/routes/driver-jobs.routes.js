@@ -8,6 +8,9 @@ const { notifyUserBookingEvent } = require('../lib/pushNotifications');
 
 const DRIVER_SEARCH_RADIUS_KM = 10;
 const OFFER_EXPIRY_MS = 60 * 1000;
+const DELIVERY_OTP_LENGTH = 6;
+const DELIVERY_OTP_TTL_MS = 10 * 60 * 1000;
+const DELIVERY_OTP_RESEND_COOLDOWN_MS = 30 * 1000;
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -20,7 +23,39 @@ const maskEmail = (email = '') => {
   const visible = local.slice(0, 2);
   return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
 };
-const generateDeliveryOtp = () => Math.floor(1000 + Math.random() * 9000).toString();
+const generateDeliveryOtp = () => Math.floor(10 ** (DELIVERY_OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (DELIVERY_OTP_LENGTH - 1)).toString();
+const addMillis = (date, millis) => new Date(date.getTime() + millis);
+const deliveryOtpWindow = (sentAt, now = new Date()) => {
+  if (!sentAt) {
+    return {
+      active: false,
+      canResend: true,
+      expiresAt: null,
+      resendAvailableAt: now,
+    };
+  }
+  const sentDate = new Date(sentAt);
+  const expiresAt = addMillis(sentDate, DELIVERY_OTP_TTL_MS);
+  const resendAvailableAt = addMillis(sentDate, DELIVERY_OTP_RESEND_COOLDOWN_MS);
+  return {
+    active: now < expiresAt,
+    canResend: now >= resendAvailableAt,
+    expiresAt,
+    resendAvailableAt,
+  };
+};
+const deliveryOtpPayload = ({ booking, recipientEmail, now = new Date(), adminOtp = null, alreadySent = false }) => {
+  const sentAt = booking.deliveryOtpSentAt || now;
+  const window = deliveryOtpWindow(sentAt, now);
+  return {
+    recipientEmail: recipientEmail ? maskEmail(recipientEmail) : '',
+    otpSentAt: sentAt.toISOString(),
+    otpExpiresAt: window.expiresAt?.toISOString() || addMillis(now, DELIVERY_OTP_TTL_MS).toISOString(),
+    resendAvailableAt: window.resendAvailableAt?.toISOString() || now.toISOString(),
+    alreadySent,
+    adminOtp,
+  };
+};
 let _supabaseAdmin;
 function getSupabaseAdmin() {
   if (!_supabaseAdmin) {
@@ -406,6 +441,9 @@ router.put('/:id/status', async (req, res, next) => {
     if (backendStatus === 'DELIVERED') {
       return next(new AppError('Use proof submission to complete delivery', 400));
     }
+    if (backendStatus === 'PICKUP_DONE') {
+      return next(new AppError('Use pickup OTP verification to confirm pickup', 400));
+    }
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
     if (!booking) return next(new AppError('Job not found', 404));
@@ -462,6 +500,8 @@ router.post('/:id/verify-pickup-otp', async (req, res, next) => {
 // POST /api/driver/jobs/:id/request-delivery-otp — generate/send recipient OTP at drop-off
 router.post('/:id/request-delivery-otp', async (req, res, next) => {
   try {
+    const forceResend = req.body?.forceResend === true;
+    const now = new Date();
     console.log('[driver-jobs] POST request-delivery-otp — driver:', driverLabel(req.driver), 'bookingId:', req.params.id);
     const booking = await prisma.booking.findUnique({
       where: { id: req.params.id },
@@ -474,20 +514,58 @@ router.post('/:id/request-delivery-otp', async (req, res, next) => {
     }
 
     const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
+    const isAdminDispatch = booking.dispatchSource === 'ADMIN';
+    if (!isAdminDispatch && !recipientEmail) {
+      return next(new AppError('Recipient email is required to send delivery OTP', 400));
+    }
+
+    const existingWindow = deliveryOtpWindow(booking.deliveryOtpSentAt, now);
+    const hasActiveAdminOtp = isAdminDispatch && booking.deliveryOtp && existingWindow.active;
+    const hasActiveEmailOtp = !isAdminDispatch && booking.deliveryOtpSentAt && existingWindow.active;
+    if (!forceResend && (hasActiveAdminOtp || hasActiveEmailOtp)) {
+      return res.json({
+        success: true,
+        data: deliveryOtpPayload({
+          booking,
+          recipientEmail,
+          now,
+          adminOtp: isAdminDispatch ? booking.deliveryOtp : null,
+          alreadySent: true,
+        }),
+        message: recipientEmail
+          ? `OTP already sent for ${maskEmail(recipientEmail)}`
+          : 'OTP already generated',
+      });
+    }
+
+    if (forceResend && booking.deliveryOtpSentAt && !existingWindow.canResend) {
+      return res.json({
+        success: true,
+        data: deliveryOtpPayload({
+          booking,
+          recipientEmail,
+          now,
+          adminOtp: isAdminDispatch ? booking.deliveryOtp : null,
+          alreadySent: true,
+        }),
+        message: `OTP can be resent after ${existingWindow.resendAvailableAt.toISOString()}`,
+      });
+    }
+
     const generatedOtp = generateDeliveryOtp();
     const updateData = {
-      deliveryOtpSentAt: new Date(),
+      deliveryOtpSentAt: now,
       deliveryOtpVerifiedAt: null,
     };
-    const isAdminDispatch = booking.dispatchSource === 'ADMIN';
     if (isAdminDispatch) {
       updateData.deliveryOtp = generatedOtp;
     } else {
       updateData.deliveryOtp = '';
     }
-    await prisma.booking.update({
+    const updatedBooking = await prisma.booking.update({
       where: { id: req.params.id },
       data: updateData,
+      include: bookingInclude,
     });
 
     if (!isAdminDispatch && recipientEmail) {
@@ -513,15 +591,17 @@ router.post('/:id/request-delivery-otp', async (req, res, next) => {
       isAdminDispatch ? generatedOtp : '[supabase-email-otp]'
     );
 
-    await notifyUserBookingEvent(booking, 'DELIVERY_OTP_REQUESTED');
+    await notifyUserBookingEvent(updatedBooking, 'DELIVERY_OTP_REQUESTED');
 
     res.json({
       success: true,
-      data: {
-        recipientEmail: recipientEmail ? maskEmail(recipientEmail) : '',
-        otpSentAt: new Date().toISOString(),
+      data: deliveryOtpPayload({
+        booking: updatedBooking,
+        recipientEmail,
+        now,
         adminOtp: isAdminDispatch ? generatedOtp : null,
-      },
+        alreadySent: false,
+      }),
       message: recipientEmail
         ? `OTP sent for ${maskEmail(recipientEmail)}`
         : 'OTP generated (recipient email missing)',
@@ -554,6 +634,10 @@ router.post('/:id/proof', async (req, res, next) => {
     }
     const normalizedOtp = String(otpCode).trim();
     const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
+    const otpWindow = deliveryOtpWindow(booking.deliveryOtpSentAt);
+    if (!booking.deliveryOtpSentAt || !otpWindow.active) {
+      return next(new AppError('Recipient OTP expired. Please resend the OTP.', 400));
+    }
 
     if (booking.dispatchSource === 'ADMIN') {
       if (!booking.deliveryOtp || booking.deliveryOtp !== normalizedOtp) {
