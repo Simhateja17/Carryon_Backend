@@ -74,10 +74,7 @@ router.post('/topup/intent', async (req, res, next) => {
       amount: amountMinor,
       currency,
       customer: stripeCustomerId,
-      automatic_payment_methods: {
-        enabled: true,
-        allow_redirects: 'never',
-      },
+      payment_method_types: ['grabpay', 'fpx', 'card'],
       metadata: {
         userId: user.id,
         purpose: 'wallet_topup',
