@@ -1,39 +1,25 @@
 const { Router } = require('express');
-const { createClient } = require('@supabase/supabase-js');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
-const { haversineKm } = require('../lib/distance');
+const { notifyUserBookingEvent } = require('../lib/pushNotifications');
 const {
-  sendPushToDriverIds,
-  notifyUserBookingEvent,
-} = require('../lib/pushNotifications');
-
-const DRIVER_SEARCH_RADIUS_KM = 10;
-const DELIVERY_OTP_TTL_MS = 10 * 60 * 1000;
-const VEHICLE_RATE_PER_KM = {
-  BIKE: { regular: 0.90, priority: 1.50, pooling: 0.68 },
-  CAR: { regular: 1.17, priority: 1.88, pooling: 0.88 },
-  PICKUP: { regular: 3.40, priority: 5.90, pooling: 3.00 },
-  VAN_7FT: { regular: 5.40, priority: 9.44, pooling: 4.85 },
-  VAN_9FT: { regular: 6.40, priority: 10.69, pooling: 5.83 },
-  LORRY_10FT: { regular: 8.23, priority: 14.40, pooling: 7.40 },
-  LORRY_14FT: { regular: 11.60, priority: 22.60, pooling: 10.44 },
-  LORRY_17FT: { regular: 15.60, priority: 26.60, pooling: 13.70 },
-};
+  serverQuote,
+  generateNextOrderCode,
+  isOrderCodeConflict,
+  settleDeliveredBooking,
+  canTransition,
+  canUserCancel,
+  money,
+  isDeliveryOtpActive,
+  generatePickupOtp,
+} = require('../services/bookingLifecycle');
+const { reserveBookingPayment, refundBooking } = require('../services/walletLedger');
+const { notifyNearbyDrivers } = require('../services/dispatch');
+const { verifyUserDeliveryOtp } = require('../services/deliveryOtp');
 
 const router = Router();
 router.use(authenticate);
-let _supabaseAdmin;
-function getSupabaseAdmin() {
-  if (!_supabaseAdmin) {
-    _supabaseAdmin = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY
-    );
-  }
-  return _supabaseAdmin;
-}
 
 const bookingIncludes = {
   pickupAddress: true,
@@ -41,146 +27,6 @@ const bookingIncludes = {
   driver: true,
 };
 const isEmail = (value = '') => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
-
-function generateDeliveryOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
-
-function isDeliveryOtpActive(sentAt, now = new Date()) {
-  return !!sentAt && now < new Date(new Date(sentAt).getTime() + DELIVERY_OTP_TTL_MS);
-}
-
-function money(value) {
-  return Math.round(Number(value || 0) * 100) / 100;
-}
-
-function positiveNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function coordinate(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function estimateMinutes(distanceKm) {
-  if (!distanceKm || distanceKm <= 0) return 0;
-  return Math.max(5, Math.ceil((distanceKm / 30) * 60));
-}
-
-function normalizedDeliveryMode(deliveryMode) {
-  const mode = String(deliveryMode || 'Regular').trim().toLowerCase();
-  if (mode === 'priority') return 'priority';
-  if (mode === 'pooling') return 'pooling';
-  return 'regular';
-}
-
-function serverQuote({ pickupAddress, deliveryAddress, vehicleType, deliveryMode, estimatedPrice, distance, duration }) {
-  const pickupLat = coordinate(pickupAddress?.latitude);
-  const pickupLng = coordinate(pickupAddress?.longitude);
-  const deliveryLat = coordinate(deliveryAddress?.latitude);
-  const deliveryLng = coordinate(deliveryAddress?.longitude);
-  const directDistance = pickupLat != null && pickupLng != null && deliveryLat != null && deliveryLng != null
-    ? haversineKm(pickupLat, pickupLng, deliveryLat, deliveryLng)
-    : 0;
-  const resolvedDistance = money(Math.max(positiveNumber(distance), directDistance));
-  const rates = VEHICLE_RATE_PER_KM[vehicleType] || VEHICLE_RATE_PER_KM.CAR;
-  const rate = rates[normalizedDeliveryMode(deliveryMode)] || rates.regular;
-  const calculatedPrice = money(resolvedDistance * rate);
-  const clientPrice = money(positiveNumber(estimatedPrice));
-
-  return {
-    estimatedPrice: Math.max(clientPrice, calculatedPrice),
-    distance: resolvedDistance,
-    duration: positiveNumber(duration) || estimateMinutes(resolvedDistance),
-  };
-}
-
-function nextOrderCodeFromLast(lastOrderCode) {
-  const match = /^ORD-(\d+)$/.exec(lastOrderCode || '');
-  const next = match ? Number(match[1]) + 1 : 1;
-  return `ORD-${String(next).padStart(6, '0')}`;
-}
-
-async function generateNextOrderCode(tx) {
-  const latest = await tx.booking.findFirst({
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { orderCode: true },
-  });
-  return nextOrderCodeFromLast(latest?.orderCode);
-}
-
-function isOrderCodeConflict(err) {
-  const target = err?.meta?.target;
-  if (err?.code !== 'P2002') return false;
-  if (Array.isArray(target)) return target.includes('orderCode');
-  return typeof target === 'string' && target.includes('orderCode');
-}
-
-async function settleDeliveredBooking(tx, booking, now, deliveryProofUrl = null) {
-  const updated = await tx.booking.update({
-    where: { id: booking.id },
-    data: {
-      status: 'DELIVERED',
-      otp: '',
-      deliveryOtp: '',
-      deliveryOtpVerifiedAt: booking.deliveryOtpVerifiedAt || now,
-      deliveryProofUrl: deliveryProofUrl || booking.deliveryProofUrl || null,
-      deliveredAt: booking.deliveredAt || now,
-      paymentStatus: 'COMPLETED',
-    },
-    include: bookingIncludes,
-  });
-
-  await tx.order.upsert({
-    where: { bookingId: booking.id },
-    create: { bookingId: booking.id, completedAt: now },
-    update: { completedAt: now },
-  });
-
-  if (booking.driverId) {
-    const wallet = await tx.driverWallet.findUnique({ where: { driverId: booking.driverId } });
-    if (wallet) {
-      const existingEarning = await tx.driverWalletTransaction.findFirst({
-        where: {
-          walletId: wallet.id,
-          type: 'DELIVERY_EARNING',
-          jobId: booking.id,
-        },
-      });
-
-      if (!existingEarning) {
-        const earning = money(booking.finalPrice || booking.estimatedPrice);
-        await tx.driverWalletTransaction.create({
-          data: {
-            walletId: wallet.id,
-            type: 'DELIVERY_EARNING',
-            amount: earning,
-            description: `Delivery earning for job ${booking.id.slice(0, 8)}`,
-            jobId: booking.id,
-          },
-        });
-        await tx.driverWallet.update({
-          where: { id: wallet.id },
-          data: {
-            balance: { increment: earning },
-            lifetimeEarnings: { increment: earning },
-          },
-        });
-      }
-    }
-
-    if (!booking.deliveredAt) {
-      await tx.driver.update({
-        where: { id: booking.driverId },
-        data: { totalTrips: { increment: 1 } },
-      });
-    }
-  }
-
-  return updated;
-}
 
 // POST /api/bookings
 router.post('/', async (req, res, next) => {
@@ -203,6 +49,10 @@ router.post('/', async (req, res, next) => {
       return next(new AppError('A valid recipient email is required for delivery OTP.', 400));
     }
     const quote = serverQuote({ pickupAddress, deliveryAddress, vehicleType, deliveryMode, estimatedPrice, distance, duration });
+    const normalizedPaymentMethod = String(paymentMethod || 'WALLET').toUpperCase();
+    if (normalizedPaymentMethod !== 'WALLET') {
+      return next(new AppError('Wallet payment is required. Please top up your wallet before booking.', 400));
+    }
 
     let booking = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -239,8 +89,9 @@ router.post('/', async (req, res, next) => {
           });
 
           const orderCode = await generateNextOrderCode(tx);
+          const amountDue = money(quote.estimatedPrice);
 
-          return tx.booking.create({
+          const createdBooking = await tx.booking.create({
             data: {
               orderCode,
               userId: req.user.userId,
@@ -249,15 +100,21 @@ router.post('/', async (req, res, next) => {
               vehicleType: vehicleType || '',
               scheduledTime: scheduledTime ? new Date(scheduledTime) : null,
               estimatedPrice: quote.estimatedPrice,
+              finalPrice: amountDue,
               distance: quote.distance,
               duration: quote.duration,
-              paymentMethod: paymentMethod || 'CASH',
-              otp: generateDeliveryOtp(),
+              paymentMethod: 'WALLET',
+              paymentStatus: 'COMPLETED',
+              otp: generatePickupOtp(),
               dispatchSource: 'USER_APP',
               status: 'SEARCHING_DRIVER',
             },
             include: bookingIncludes,
           });
+
+          await reserveBookingPayment(tx, req.user.userId, createdBooking.id, orderCode, amountDue);
+
+          return createdBooking;
         });
         break;
       } catch (err) {
@@ -267,48 +124,52 @@ router.post('/', async (req, res, next) => {
 
     console.log('[booking] Created booking id:', booking.id, 'status:', booking.status, 'estimatedPrice:', booking.estimatedPrice);
 
-    // Fire-and-forget FCM push to nearby online drivers with matching vehicle type
-    prisma.driver.findMany({
-      where: { isOnline: true },
-      select: { id: true, name: true, currentLatitude: true, currentLongitude: true, vehicle: { select: { type: true } } },
-    }).then((drivers) => {
-      const pickupLat = booking.pickupAddress.latitude;
-      const pickupLng = booking.pickupAddress.longitude;
-      const bookingVehicleType = booking.vehicleType;
-      console.log('[booking] FCM driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers:', drivers.length);
-      const nearbyDrivers = drivers.filter(d => {
-        const withinRadius = haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
-        const vehicleMatches = !bookingVehicleType || !d.vehicle?.type || d.vehicle.type === bookingVehicleType;
-        return withinRadius && vehicleMatches;
-      });
-      console.log('[booking] FCM nearby drivers (within', DRIVER_SEARCH_RADIUS_KM, 'km):', nearbyDrivers.length,
-        '| notifying:', nearbyDrivers.map(d => d.name));
-      const nearbyDriverIds = nearbyDrivers.map((driver) => driver.id);
-      if (nearbyDriverIds.length === 0) {
-        console.log('[booking] FCM — no nearby drivers found for booking:', booking.id);
-        return;
-      }
-      return sendPushToDriverIds(
-        nearbyDriverIds,
-        { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },
-        { type: 'JOB_REQUEST', bookingId: booking.id }
-      ).then((result) => {
-        console.log(
-          '[booking] FCM push sent for booking',
-          booking.id,
-          '— successCount:',
-          result?.successCount,
-          'failureCount:',
-          result?.failureCount,
-          'noDeviceDrivers:',
-          result?.noDeviceActorIds?.length || 0
-        );
-      });
-    }).catch((err) => {
+    // Fire-and-forget dispatch to nearby drivers
+    notifyNearbyDrivers(booking).catch((err) => {
       console.error('[booking] FCM push to drivers failed:', err.message);
     });
 
     res.status(201).json({ success: true, data: booking });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/bookings/quote
+router.post('/quote', async (req, res, next) => {
+  try {
+    const {
+      pickupAddress,
+      deliveryAddress,
+      vehicleType,
+      deliveryMode,
+      estimatedPrice,
+      distance,
+      duration,
+    } = req.body;
+
+    if (!pickupAddress || !deliveryAddress) {
+      return next(new AppError('pickupAddress and deliveryAddress are required', 400));
+    }
+
+    const quote = serverQuote({
+      pickupAddress,
+      deliveryAddress,
+      vehicleType,
+      deliveryMode,
+      estimatedPrice,
+      distance,
+      duration,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        estimatedPrice: quote.estimatedPrice,
+        distance: quote.distance,
+        duration: quote.duration,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -352,9 +213,7 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ── Delivery OTP Verification (#17) ──────────────────────
-
-// POST /api/bookings/:id/verify-delivery - Verify delivery OTP
+// POST /api/bookings/:id/verify-delivery
 router.post('/:id/verify-delivery', async (req, res, next) => {
   try {
     const { otp, deliveryProofUrl } = req.body;
@@ -383,26 +242,11 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
       return next(new AppError('Delivery OTP expired. Please request a new code.', 400));
     }
 
-    const normalizedOtp = String(otp).trim();
-    if (booking.deliveryOtp) {
-      if (booking.deliveryOtp !== normalizedOtp) {
-        console.log('[booking] verify-delivery — OTP mismatch for bookingId:', req.params.id);
-        return next(new AppError('Invalid delivery OTP', 400));
-      }
-    } else {
-      const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || req.user.email || '';
-      if (!recipientEmail) {
-        return next(new AppError('Recipient email is required to verify delivery OTP', 400));
-      }
-      const { error } = await getSupabaseAdmin().auth.verifyOtp({
-        email: recipientEmail,
-        token: normalizedOtp,
-        type: 'email',
-      });
-      if (error) {
-        console.log('[booking] verify-delivery — Supabase OTP mismatch for bookingId:', req.params.id);
-        return next(new AppError('Invalid delivery OTP', 400));
-      }
+    const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || req.user.email || '';
+    const result = await verifyUserDeliveryOtp({ booking, otp, recipientEmail });
+    if (!result.valid) {
+      console.log('[booking] verify-delivery — OTP mismatch for bookingId:', req.params.id);
+      return next(new AppError(result.error, 400));
     }
 
     const now = new Date();
@@ -419,9 +263,7 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
   }
 });
 
-// ── ETA & Status Updates (#18) ───────────────────────────
-
-// PUT /api/bookings/:id/status - Update booking status
+// PUT /api/bookings/:id/status
 router.put('/:id/status', async (req, res, next) => {
   try {
     const { status, eta } = req.body;
@@ -440,19 +282,7 @@ router.put('/:id/status', async (req, res, next) => {
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.userId !== req.user.userId) return next(new AppError('Not authorized', 403));
 
-    // State machine: only allow valid transitions
-    const allowedTransitions = {
-      PENDING: ['SEARCHING_DRIVER', 'CANCELLED'],
-      SEARCHING_DRIVER: ['DRIVER_ASSIGNED', 'CANCELLED'],
-      DRIVER_ASSIGNED: ['DRIVER_ARRIVED', 'CANCELLED'],
-      DRIVER_ARRIVED: ['PICKUP_DONE', 'CANCELLED'],
-      PICKUP_DONE: ['IN_TRANSIT', 'CANCELLED'],
-      IN_TRANSIT: ['DELIVERED', 'CANCELLED'],
-      DELIVERED: [],
-      CANCELLED: [],
-    };
-    const allowed = allowedTransitions[booking.status] || [];
-    if (!allowed.includes(status)) {
+    if (!canTransition(booking.status, status)) {
       return next(new AppError(`Cannot transition from ${booking.status} to ${status}`, 400));
     }
 
@@ -480,7 +310,7 @@ router.put('/:id/status', async (req, res, next) => {
   }
 });
 
-// GET /api/bookings/:id/eta - Get ETA for a booking
+// GET /api/bookings/:id/eta
 router.get('/:id/eta', async (req, res, next) => {
   try {
     const booking = await prisma.booking.findUnique({
@@ -540,7 +370,7 @@ router.get('/:id/eta', async (req, res, next) => {
   }
 });
 
-// POST /api/bookings/:id/cancel - Cancel a booking
+// POST /api/bookings/:id/cancel
 router.post('/:id/cancel', async (req, res, next) => {
   try {
     const { reason } = req.body;
@@ -550,8 +380,7 @@ router.post('/:id/cancel', async (req, res, next) => {
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.userId !== req.user.userId) return next(new AppError('Not authorized', 403));
 
-    const nonCancellable = ['DELIVERED', 'CANCELLED'];
-    if (nonCancellable.includes(booking.status)) {
+    if (!canUserCancel(booking.status)) {
       return next(new AppError(`Cannot cancel a ${booking.status.toLowerCase()} booking`, 400));
     }
 
@@ -566,28 +395,7 @@ router.post('/:id/cancel', async (req, res, next) => {
     if (booking.paymentMethod === 'WALLET' && booking.paymentStatus === 'COMPLETED') {
       const amount = booking.finalPrice || booking.estimatedPrice;
       console.log('[booking] Cancel refund — bookingId:', req.params.id, 'refund amount:', amount);
-      const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.userId } });
-      if (wallet) {
-        await prisma.$transaction([
-          prisma.wallet.update({
-            where: { id: wallet.id },
-            data: { balance: { increment: amount } },
-          }),
-          prisma.walletTransaction.create({
-            data: {
-              walletId: wallet.id,
-              type: 'REFUND',
-              amount,
-              description: 'Booking cancellation refund',
-              referenceId: req.params.id,
-            },
-          }),
-          prisma.booking.update({
-            where: { id: req.params.id },
-            data: { paymentStatus: 'REFUNDED' },
-          }),
-        ]);
-      }
+      await refundBooking(prisma, req.user.userId, req.params.id, amount);
     }
 
     await notifyUserBookingEvent(updatedBooking, 'CANCELLED');

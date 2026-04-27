@@ -3,35 +3,13 @@ const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
 const { sendPushToDriverIds } = require('../lib/pushNotifications');
+const { generateNextOrderCode, isOrderCodeConflict } = require('../services/bookingLifecycle');
+const { generatePickupOtp } = require('../services/deliveryOtp');
+const { notifyDriversForAdminBooking } = require('../services/dispatch');
+const { VALID_VEHICLE_TYPES, VALID_PAYMENT_METHODS } = require('../services/businessConfig');
 
 const router = Router();
-const DRIVER_SEARCH_RADIUS_KM = 10;
 const FALLBACK_TEST_USER_EMAIL = 'admin.test.rider@carryon.local';
-
-function generateDeliveryOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
-}
-
-function nextOrderCodeFromLast(lastOrderCode) {
-  const match = /^ORD-(\d+)$/.exec(lastOrderCode || '');
-  const next = match ? Number(match[1]) + 1 : 1;
-  return `ORD-${String(next).padStart(6, '0')}`;
-}
-
-async function generateNextOrderCode(tx) {
-  const latest = await tx.booking.findFirst({
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { orderCode: true },
-  });
-  return nextOrderCodeFromLast(latest?.orderCode);
-}
-
-function isOrderCodeConflict(err) {
-  const target = err?.meta?.target;
-  if (err?.code !== 'P2002') return false;
-  if (Array.isArray(target)) return target.includes('orderCode');
-  return typeof target === 'string' && target.includes('orderCode');
-}
 
 function sanitizeAddress(input) {
   return {
@@ -45,7 +23,7 @@ function sanitizeAddress(input) {
   };
 }
 
-// GET /api/admin/notifications — list recent push notifications sent
+// GET /api/admin/notifications
 router.get('/', async (req, res, next) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -69,7 +47,7 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// POST /api/admin/notifications/ride-request — create a real booking and notify drivers
+// POST /api/admin/notifications/ride-request
 router.post('/ride-request', async (req, res, next) => {
   try {
     const {
@@ -101,14 +79,12 @@ router.post('/ride-request', async (req, res, next) => {
       return next(new AppError('price must be a valid number greater than 0', 400));
     }
 
-    const validVehicleTypes = ['BIKE', 'CAR', 'PICKUP', 'VAN_7FT', 'VAN_9FT', 'LORRY_10FT', 'LORRY_14FT', 'LORRY_17FT'];
-    if (!validVehicleTypes.includes(vehicleType)) {
-      return next(new AppError(`Invalid vehicleType. Must be one of: ${validVehicleTypes.join(', ')}`, 400));
+    if (!VALID_VEHICLE_TYPES.includes(vehicleType)) {
+      return next(new AppError(`Invalid vehicleType. Must be one of: ${VALID_VEHICLE_TYPES.join(', ')}`, 400));
     }
 
-    const validPaymentMethods = ['CASH', 'UPI', 'CARD', 'WALLET'];
-    if (!validPaymentMethods.includes(paymentMethod)) {
-      return next(new AppError(`Invalid paymentMethod. Must be one of: ${validPaymentMethods.join(', ')}`, 400));
+    if (!VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+      return next(new AppError(`Invalid paymentMethod. Must be one of: ${VALID_PAYMENT_METHODS.join(', ')}`, 400));
     }
     if (!Array.isArray(driverIds)) {
       return next(new AppError('driverIds must be an array', 400));
@@ -182,7 +158,7 @@ router.post('/ride-request', async (req, res, next) => {
               duration,
               paymentMethod,
               status: 'SEARCHING_DRIVER',
-              otp: generateDeliveryOtp(),
+              otp: generatePickupOtp(),
               dispatchSource: 'ADMIN',
             },
             include: {
@@ -197,84 +173,8 @@ router.post('/ride-request', async (req, res, next) => {
       }
     }
 
-    const isDirectTargeted = driverIds.length > 0;
-    const driverWhere = isDirectTargeted
-      ? { id: { in: driverIds } }
-      : { isOnline: true };
-
-    const candidateDrivers = await prisma.driver.findMany({
-      where: driverWhere,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        currentLatitude: true,
-        currentLongitude: true,
-        vehicle: { select: { type: true } },
-      },
-    });
-
-    const nearbyDrivers = candidateDrivers.filter((driver) => {
-      if (isDirectTargeted) return true;
-      const withinRadius =
-        haversineKm(
-          booking.pickupAddress.latitude,
-          booking.pickupAddress.longitude,
-          driver.currentLatitude,
-          driver.currentLongitude
-        ) <= DRIVER_SEARCH_RADIUS_KM;
-      const vehicleMatches =
-        !driver.vehicle?.type || driver.vehicle.type === booking.vehicleType;
-      return withinRadius && vehicleMatches;
-    });
-
-    const targetedDrivers = nearbyDrivers.map((d) => ({
-      id: d.id,
-      name: d.name,
-      email: d.email,
-    }));
-
-    if (nearbyDrivers.length > 0) {
-      await prisma.driverNotification.createMany({
-        data: nearbyDrivers.map((driver) => ({
-          driverId: driver.id,
-          title: 'New Ride Request!',
-          message: `${booking.pickupAddress.address} → ${booking.deliveryAddress.address} (${parsedPrice.toFixed(2)})`,
-          type: 'JOB_REQUEST',
-          actionData: JSON.stringify({
-            bookingId: booking.id,
-            source: 'admin',
-            targeted: isDirectTargeted,
-          }),
-        })),
-      });
-    }
-
-    let pushResult = {
-      successCount: 0,
-      failureCount: 0,
-      failedTokens: [],
-      invalidTokens: [],
-      cleanedInvalidTokens: 0,
-      deliveredActorIds: [],
-      failedActorIds: [],
-      noDeviceActorIds: [],
-    };
-    if (nearbyDrivers.length > 0) {
-      pushResult = await sendPushToDriverIds(
-        nearbyDrivers.map((driver) => driver.id),
-        {
-          title: 'New Ride Request!',
-          body: `${booking.pickupAddress.address} → ${booking.deliveryAddress.address}`,
-        },
-        {
-          type: 'JOB_REQUEST',
-          bookingId: booking.id,
-          source: 'admin',
-          targeted: isDirectTargeted ? 'true' : 'false',
-        }
-      );
-    }
+    const { targetedDrivers, pushResult, isDirectTargeted, nearbyDrivers } =
+      await notifyDriversForAdminBooking(booking, driverIds);
 
     const deliveredDrivers = nearbyDrivers
       .filter((driver) => pushResult.deliveredActorIds.includes(driver.id))
@@ -315,7 +215,7 @@ router.post('/ride-request', async (req, res, next) => {
   }
 });
 
-// POST /api/admin/notifications/send — send push notification to drivers
+// POST /api/admin/notifications/send
 router.post('/send', async (req, res, next) => {
   try {
     const { title, message, type = 'PROMO', audience = 'all' } = req.body;
@@ -330,7 +230,6 @@ router.post('/send', async (req, res, next) => {
       return next(new AppError(`Invalid type. Must be one of: ${validTypes.join(', ')}`, 400));
     }
 
-    // Determine target drivers — also fetch fcmToken for push delivery
     let whereClause = {};
     if (audience === 'online') {
       whereClause = { isOnline: true };
@@ -346,7 +245,6 @@ router.post('/send', async (req, res, next) => {
       return res.json({ success: true, data: { sent: 0, message: 'No matching drivers found' } });
     }
 
-    // Insert a notification record for each driver
     const notifications = await prisma.driverNotification.createMany({
       data: drivers.map((driver) => ({
         driverId: driver.id,
@@ -356,7 +254,6 @@ router.post('/send', async (req, res, next) => {
       })),
     });
 
-    // Send actual FCM push notifications to drivers who have tokens
     let pushResult = {
       successCount: 0,
       failureCount: 0,
@@ -411,7 +308,7 @@ router.post('/send', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/drivers — list drivers for the dashboard
+// GET /api/admin/drivers
 router.get('/drivers', async (req, res, next) => {
   try {
     const drivers = await prisma.driver.findMany({
@@ -443,7 +340,7 @@ router.get('/drivers', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/stats — dashboard stats
+// GET /api/admin/stats
 router.get('/stats', async (req, res, next) => {
   try {
     const [totalDrivers, onlineDrivers, totalBookings, activeBookings, totalNotifications] =
@@ -464,7 +361,7 @@ router.get('/stats', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/notifications/recipient-otps — monitor recipient OTPs for admin-dispatched bookings
+// GET /api/admin/notifications/recipient-otps
 router.get('/recipient-otps', async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);

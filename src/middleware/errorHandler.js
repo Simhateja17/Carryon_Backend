@@ -17,7 +17,12 @@ function errorHandler(err, req, res, _next) {
     console.error('Unhandled error:', err);
   }
 
-  res.status(statusCode).json({ success: false, message });
+  const payload = { success: false, message };
+  if (err.details && typeof err.details === 'object') {
+    payload.details = err.details;
+  }
+
+  res.status(statusCode).json(payload);
 }
 
 module.exports = { AppError, notFoundHandler, errorHandler };

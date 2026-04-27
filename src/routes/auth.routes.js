@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 const prisma = require('../lib/prisma');
 const { authenticateToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { OTP_LENGTH, isValidOtp, normalizeOtp } = require('../lib/otp');
 
 const router = Router();
 const maskEmail = (email = '') => {
@@ -128,14 +129,18 @@ router.post('/verify-otp', async (req, res, next) => {
     });
     return next(new AppError('Email and OTP are required.', 400));
   }
+  if (!isValidOtp(otp)) {
+    return next(new AppError(`OTP must be ${OTP_LENGTH} digits.`, 400));
+  }
 
   try {
     console.log(`[auth] verify-otp request for ${maskEmail(email)} (mode=${mode})`);
+    const normalizedOtp = normalizeOtp(otp);
 
     // Verify OTP with Supabase
     const { data, error } = await getSupabaseAdmin().auth.verifyOtp({
       email,
-      token: otp,
+      token: normalizedOtp,
       type: 'email',
     });
 

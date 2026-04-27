@@ -97,8 +97,12 @@ router.get('/wallet', async (req, res, next) => {
         lifetimeEarnings: wallet.lifetimeEarnings,
         lastPayout: null,
         lastPayoutDate: null,
-        bankAccountLinked: false,
-        bankAccountLast4: null,
+        bankAccountLinked: !!req.driver.stripePayoutsEnabled,
+        bankAccountLast4: req.driver.stripePayoutsEnabled ? 'Stripe' : null,
+        stripeAccountId: req.driver.stripeConnectAccountId || null,
+        stripeDetailsSubmitted: !!req.driver.stripeDetailsSubmitted,
+        stripePayoutsEnabled: !!req.driver.stripePayoutsEnabled,
+        stripeRequirements: req.driver.stripeRequirements || null,
       },
     });
   } catch (err) {
@@ -109,38 +113,10 @@ router.get('/wallet', async (req, res, next) => {
 // POST /api/driver/wallet/withdraw
 router.post('/wallet/withdraw', async (req, res, next) => {
   try {
-    const { amount } = req.body;
-    console.log('[driver-earnings] POST withdraw — driverId:', req.driver.id, 'amount:', amount);
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ success: false, message: 'Invalid amount' });
-    }
-
-    const wallet = await prisma.driverWallet.findUnique({
-      where: { driverId: req.driver.id },
+    res.status(410).json({
+      success: false,
+      message: 'Use /api/driver/payouts/withdraw for Stripe Connect withdrawals',
     });
-
-    if (!wallet || wallet.balance < amount) {
-      console.log('[driver-earnings] withdraw rejected — driverId:', req.driver.id, 'balance:', wallet?.balance, 'requested:', amount);
-      return res.status(400).json({ success: false, message: 'Insufficient balance' });
-    }
-
-    const transaction = await prisma.driverWalletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: 'WITHDRAWAL',
-        amount: -amount,
-        description: `Withdrawal of RM ${amount.toFixed(2)}`,
-        status: 'PENDING',
-      },
-    });
-
-    await prisma.driverWallet.update({
-      where: { id: wallet.id },
-      data: { balance: { decrement: amount } },
-    });
-    console.log('[driver-earnings] withdraw — driverId:', req.driver.id, 'amount:', amount, 'txnId:', transaction.id, 'status: PENDING');
-
-    res.json({ success: true, data: transaction });
   } catch (err) {
     next(err);
   }

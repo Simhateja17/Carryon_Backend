@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "build": "npx prisma generate",
     "seed:help-articles": "node scripts/seed-help-articles.js",
+    "test": "jest --forceExit",
     "postinstall": "npx prisma generate"
   },
   "dependencies": {
@@ -22,12 +23,14 @@
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^4.0.1",
     "morgan": "^1.10.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "stripe": "^18.5.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "jest": "^30.3.0",
     "nodemon": "^3.0.0",
     "prisma": "^6.19.2"
   }

@@ -2,11 +2,13 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { applyReferralBonus } = require('../services/walletLedger');
+const { REFERRAL_REWARD_AMOUNT } = require('../services/businessConfig');
 
 const router = Router();
 router.use(authenticate);
 
-// POST /api/promo/validate - Validate a promo code
+// POST /api/promo/validate
 router.post('/validate', async (req, res, next) => {
   try {
     const { code, orderAmount } = req.body;
@@ -26,7 +28,6 @@ router.post('/validate', async (req, res, next) => {
       return next(new AppError(`Minimum order value is RM ${coupon.minOrderValue}`, 400));
     }
 
-    // Check if user already used this coupon
     const existing = await prisma.userCoupon.findUnique({
       where: { userId_couponId: { userId: req.user.userId, couponId: coupon.id } },
     });
@@ -62,7 +63,7 @@ router.post('/validate', async (req, res, next) => {
   }
 });
 
-// POST /api/promo/apply - Apply a promo code to a booking
+// POST /api/promo/apply
 router.post('/apply', async (req, res, next) => {
   try {
     const { code, bookingId } = req.body;
@@ -109,7 +110,7 @@ router.post('/apply', async (req, res, next) => {
   }
 });
 
-// GET /api/promo/coupons - List available coupons for user
+// GET /api/promo/coupons
 router.get('/coupons', async (req, res, next) => {
   try {
     const coupons = await prisma.coupon.findMany({
@@ -145,11 +146,9 @@ router.get('/coupons', async (req, res, next) => {
   }
 });
 
-// GET /api/promo/referral - Get user's referral code & stats
+// GET /api/promo/referral
 router.get('/referral', async (req, res, next) => {
   try {
-    // referralCode is not in the JWT, so we still fetch it — but we no longer
-    // fetch name since it is already available in req.user from the token.
     const userRecord = await prisma.user.findUnique({
       where: { id: req.user.userId },
       select: { referralCode: true },
@@ -177,7 +176,7 @@ router.get('/referral', async (req, res, next) => {
   }
 });
 
-// POST /api/promo/referral/apply - Apply a referral code (for new users)
+// POST /api/promo/referral/apply
 router.post('/referral/apply', async (req, res, next) => {
   try {
     const { referralCode } = req.body;
@@ -190,46 +189,18 @@ router.post('/referral/apply', async (req, res, next) => {
       return next(new AppError('You cannot use your own referral code', 400));
     }
 
-    // Check if user already used a referral
     const existing = await prisma.referral.findFirst({
       where: { refereeId: req.user.userId },
     });
     if (existing) return next(new AppError('You have already used a referral code', 400));
 
-    const rewardAmount = 5.0; // RM 5
-    console.log('[promo] referral/apply — referralCode:', referralCode, 'referrerId:', referrer.id, 'userId:', req.user.userId, 'credit amount:', rewardAmount, 'each');
+    console.log('[promo] referral/apply — referralCode:', referralCode, 'referrerId:', referrer.id, 'userId:', req.user.userId, 'credit amount:', REFERRAL_REWARD_AMOUNT, 'each');
 
     await prisma.$transaction(async (tx) => {
-      // Create referral record
-      await tx.referral.create({
-        data: {
-          referrerId: referrer.id,
-          refereeId: req.user.userId,
-          referralCode,
-          rewardAmount,
-          status: 'COMPLETED',
-        },
-      });
-
-      // Credit both wallets
-      for (const userId of [referrer.id, req.user.userId]) {
-        const wallet = await tx.wallet.upsert({
-          where: { userId },
-          create: { userId, balance: rewardAmount },
-          update: { balance: { increment: rewardAmount } },
-        });
-        await tx.walletTransaction.create({
-          data: {
-            walletId: wallet.id,
-            type: 'REFERRAL_BONUS',
-            amount: rewardAmount,
-            description: 'Referral bonus',
-          },
-        });
-      }
+      await applyReferralBonus(tx, referrer.id, req.user.userId, referralCode);
     });
 
-    res.json({ success: true, message: `RM ${rewardAmount} credited to your wallet!` });
+    res.json({ success: true, message: `RM ${REFERRAL_REWARD_AMOUNT} credited to your wallet!` });
   } catch (err) {
     next(err);
   }
