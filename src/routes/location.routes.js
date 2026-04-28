@@ -3,6 +3,7 @@ const { authenticate, authenticateToken } = require('../middleware/auth');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const prisma = require('../lib/prisma');
 const location = require('../services/locationProvider');
+const { ACTIVE_TRACKING_STATUSES, broadcastDriverLocation } = require('../services/liveTracking');
 
 const router = express.Router();
 
@@ -92,7 +93,19 @@ router.post('/update-position', authenticateDriver, requireDriver, async (req, r
       data: { currentLatitude: lat, currentLongitude: lng },
     });
 
-    res.json({ success: true, message: 'Position updated' });
+    const activeBookings = await prisma.booking.findMany({
+      where: {
+        driverId: req.driver.id,
+        status: { in: ACTIVE_TRACKING_STATUSES },
+      },
+      select: { id: true },
+    });
+    const timestamp = new Date().toISOString();
+    activeBookings.forEach((booking) => {
+      broadcastDriverLocation(booking.id, { latitude: lat, longitude: lng, timestamp });
+    });
+
+    res.json({ success: true, message: 'Position updated', data: { activeBookings: activeBookings.length } });
   } catch (err) {
     next(err);
   }
@@ -106,7 +119,7 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
       where: {
         userId: req.user.userId,
         driverId: deviceId,
-        status: { in: ['DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'PICKUP_DONE', 'IN_TRANSIT'] },
+        status: { in: ['DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'PICKUP_DONE', 'IN_TRANSIT', 'ARRIVED_AT_DROP'] },
       },
       select: { id: true },
     });

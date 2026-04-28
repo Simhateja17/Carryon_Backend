@@ -2,6 +2,8 @@ require('dotenv').config();
 const net = require('net');
 const http = require('http');
 const app = require('./src/app');
+const { attachLiveTracking } = require('./src/services/liveTracking');
+const { startWebhookRetryLoop } = require('./src/services/webhookInbox');
 
 const DISCOVERY_PORT = 4999;
 
@@ -32,8 +34,11 @@ function startDiscoveryServer(actualPort) {
 const preferredPort = process.env.PORT || 3000;
 
 findAvailablePort(Number(preferredPort)).then(PORT => {
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = http.createServer(app);
+  attachLiveTracking(server);
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`CarryOn backend running on port ${PORT}`);
     startDiscoveryServer(PORT);
+    startWebhookRetryLoop();
   });
 });

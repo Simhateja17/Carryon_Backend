@@ -12,6 +12,13 @@ jest.mock('../../lib/prisma', () => ({
   walletTransaction: {
     create: jest.fn(),
   },
+  idempotencyKey: {
+    findUnique: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  auditLog: {
+    create: jest.fn(),
+  },
 }));
 
 jest.mock('../../middleware/auth', () => ({
@@ -52,6 +59,26 @@ jest.mock('../../lib/pushNotifications', () => ({
 jest.mock('../../services/dispatch', () => ({
   notifyNearbyDrivers: jest.fn().mockResolvedValue({}),
   getIncomingBookingsForDriver: jest.fn().mockResolvedValue([]),
+}));
+
+jest.mock('../../services/bookingPricing', () => ({
+  quoteBookingFare: jest.fn().mockResolvedValue({
+    estimatedPrice: 11.7,
+    price: 11.7,
+    distance: 10,
+    duration: 30,
+    isEstimated: false,
+    breakdown: {
+      currency: 'MYR',
+      vehicleType: 'CAR',
+      basePrice: 0,
+      distance: 10,
+      pricePerKm: 1.17,
+      distanceFare: 11.7,
+      tax: 0,
+      total: 11.7,
+    },
+  }),
 }));
 
 const prisma = require('../../lib/prisma');
@@ -153,6 +180,8 @@ async function invokeRoute(router, method, routePath, reqOverrides = {}) {
 describe('Booking route side effects', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.deleteMany.mockResolvedValue({ count: 0 });
   });
 
   test('booking creation debits wallet with the created booking reference', async () => {
@@ -184,12 +213,19 @@ describe('Booking route side effects', () => {
         create: jest.fn().mockResolvedValue({ id: 'wallet-txn-1' }),
         updateMany: jest.fn(),
       },
+      idempotencyKey: {
+        create: jest.fn().mockResolvedValue({ id: 'idem-1' }),
+      },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
     };
     prisma.$transaction.mockImplementation((callback) => callback(tx));
 
     const response = await invokeRoute(require('../booking.routes'), 'POST', '/', {
       method: 'POST',
       body: bookingPayload(),
+      headers: { 'idempotency-key': '11111111-1111-4111-8111-111111111111' },
     });
 
     expect(response.status).toBe(201);
@@ -202,7 +238,57 @@ describe('Booking route side effects', () => {
       })
     );
     expect(tx.walletTransaction.updateMany).not.toHaveBeenCalled();
+    expect(tx.idempotencyKey.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        key: '11111111-1111-4111-8111-111111111111',
+        bookingId: 'booking-1',
+      }),
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'BOOKING_CREATED',
+        entityId: 'booking-1',
+      }),
+    });
     expect(notifyNearbyDrivers).toHaveBeenCalledWith(expect.objectContaining({ id: 'booking-1' }));
+  });
+
+  test('duplicate idempotency key returns original booking without wallet debit', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      id: 'idem-1',
+      key: '11111111-1111-4111-8111-111111111111',
+      userId: 'user-1',
+      bookingId: 'booking-1',
+      expiresAt: new Date(Date.now() + 60_000),
+      booking: {
+        id: 'booking-1',
+        orderCode: 'ORD-000001',
+        userId: 'user-1',
+        status: 'SEARCHING_DRIVER',
+      },
+    });
+
+    const response = await invokeRoute(require('../booking.routes'), 'POST', '/', {
+      method: 'POST',
+      body: bookingPayload(),
+      headers: { 'idempotency-key': '11111111-1111-4111-8111-111111111111' },
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.idempotent).toBe(true);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(notifyNearbyDrivers).not.toHaveBeenCalled();
+  });
+
+  test('booking creation requires an idempotency key', async () => {
+    const response = await invokeRoute(require('../booking.routes'), 'POST', '/', {
+      method: 'POST',
+      body: bookingPayload(),
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe('Idempotency-Key header is required for booking creation');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   test('booking quote uses backend pricing policy', async () => {
@@ -221,8 +307,20 @@ describe('Booking route side effects', () => {
     expect(response.body.success).toBe(true);
     expect(response.body.data).toEqual({
       estimatedPrice: 11.7,
+      price: 11.7,
       distance: 10,
       duration: 30,
+      breakdown: {
+        currency: 'MYR',
+        vehicleType: 'CAR',
+        basePrice: 0,
+        distance: 10,
+        pricePerKm: 1.17,
+        distanceFare: 11.7,
+        tax: 0,
+        total: 11.7,
+      },
+      isEstimated: false,
     });
   });
 
@@ -257,8 +355,40 @@ describe('Booking route side effects', () => {
       finalPrice: 25,
       estimatedPrice: 25,
     });
-    prisma.booking.update
-      .mockResolvedValueOnce({
+    const cancelTx = {
+      booking: {
+        update: jest.fn().mockResolvedValue({
+          id: 'booking-1',
+          userId: 'user-1',
+          status: 'CANCELLED',
+          paymentMethod: 'WALLET',
+          paymentStatus: 'COMPLETED',
+          finalPrice: 25,
+          estimatedPrice: 25,
+        }),
+      },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
+    };
+    const refundTx = {
+      wallet: {
+        update: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 35 }),
+      },
+      walletTransaction: {
+        create: jest.fn().mockResolvedValue({ id: 'refund-1' }),
+      },
+      booking: {
+        update: jest.fn().mockResolvedValue({
+          id: 'booking-1',
+          paymentStatus: 'REFUNDED',
+        }),
+      },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-2' }),
+      },
+    };
+    prisma.booking.update.mockResolvedValueOnce({
         id: 'booking-1',
         userId: 'user-1',
         status: 'CANCELLED',
@@ -266,15 +396,13 @@ describe('Booking route side effects', () => {
         paymentStatus: 'COMPLETED',
         finalPrice: 25,
         estimatedPrice: 25,
-      })
-      .mockResolvedValueOnce({
-        id: 'booking-1',
-        paymentStatus: 'REFUNDED',
       });
     prisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 10 });
     prisma.wallet.update.mockResolvedValue({ id: 'wallet-1', balance: 35 });
     prisma.walletTransaction.create.mockResolvedValue({ id: 'refund-1' });
-    prisma.$transaction.mockImplementation((operations) => Promise.all(operations));
+    prisma.$transaction
+      .mockImplementationOnce((callback) => callback(cancelTx))
+      .mockImplementationOnce((callback) => callback(refundTx));
 
     const response = await invokeRoute(require('../booking.routes'), 'POST', '/:id/cancel', {
       params: { id: 'booking-1' },
@@ -282,13 +410,13 @@ describe('Booking route side effects', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(prisma.wallet.update).toHaveBeenCalledTimes(1);
-    expect(prisma.wallet.update).toHaveBeenCalledWith({
+    expect(refundTx.wallet.update).toHaveBeenCalledTimes(1);
+    expect(refundTx.wallet.update).toHaveBeenCalledWith({
       where: { id: 'wallet-1' },
       data: { balance: { increment: 25 } },
     });
-    expect(prisma.walletTransaction.create).toHaveBeenCalledTimes(1);
-    expect(prisma.walletTransaction.create).toHaveBeenCalledWith({
+    expect(refundTx.walletTransaction.create).toHaveBeenCalledTimes(1);
+    expect(refundTx.walletTransaction.create).toHaveBeenCalledWith({
       data: {
         walletId: 'wallet-1',
         type: 'REFUND',
@@ -297,7 +425,9 @@ describe('Booking route side effects', () => {
         referenceId: 'booking-1',
       },
     });
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(cancelTx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(refundTx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -356,9 +486,7 @@ describe('Driver job route side effects', () => {
         phone: '123',
       },
     };
-    prisma.booking.findUnique
-      .mockResolvedValueOnce(deliveredBooking)
-      .mockResolvedValueOnce(deliveredBooking);
+    prisma.booking.findUnique.mockResolvedValueOnce(deliveredBooking);
 
     const response = await invokeRoute(require('../driver-jobs.routes'), 'POST', '/:id/proof', {
       params: { id: 'booking-1' },
@@ -377,10 +505,10 @@ describe('Driver job route side effects', () => {
 
   test('first-time delivery proof settles and credits driver earning exactly once', async () => {
     const deliveryOtpSentAt = new Date();
-    const inTransitBooking = {
+    const arrivedAtDropBooking = {
       id: 'booking-1',
       driverId: 'driver-1',
-      status: 'IN_TRANSIT',
+      status: 'ARRIVED_AT_DROP',
       dispatchSource: 'ADMIN',
       deliveryOtp: '123456',
       deliveryOtpSentAt,
@@ -388,7 +516,7 @@ describe('Driver job route side effects', () => {
       estimatedPrice: 25,
     };
     const deliveredBooking = {
-      ...inTransitBooking,
+      ...arrivedAtDropBooking,
       status: 'DELIVERED',
       deliveryOtp: '',
       deliveredAt: new Date(),
@@ -436,8 +564,11 @@ describe('Driver job route side effects', () => {
       driver: {
         update: jest.fn().mockResolvedValue({ id: 'driver-1' }),
       },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
     };
-    prisma.booking.findUnique.mockResolvedValue(inTransitBooking);
+    prisma.booking.findUnique.mockResolvedValue(arrivedAtDropBooking);
     prisma.$transaction.mockImplementation((callback) => callback(tx));
 
     const response = await invokeRoute(require('../driver-jobs.routes'), 'POST', '/:id/proof', {
@@ -461,5 +592,11 @@ describe('Driver job route side effects', () => {
       }),
     });
     expect(tx.driver.update).toHaveBeenCalledTimes(1);
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'BOOKING_DELIVERED',
+        entityId: 'booking-1',
+      }),
+    });
   });
 });

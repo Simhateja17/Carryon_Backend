@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
+const { recordAudit } = require('../services/auditLog');
 
 const router = Router();
 
@@ -96,12 +97,23 @@ router.put('/:id/documents/:docId/review', async (req, res, next) => {
       return next(new AppError('Document not found for this driver', 404));
     }
 
-    const updated = await prisma.driverDocument.update({
-      where: { id: req.params.docId },
-      data: {
-        status,
-        rejectionReason: status === 'REJECTED' ? rejectionReason : null,
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const changed = await tx.driverDocument.update({
+        where: { id: req.params.docId },
+        data: {
+          status,
+          rejectionReason: status === 'REJECTED' ? rejectionReason : null,
+        },
+      });
+      await recordAudit(tx, {
+        actor: { actorId: 'admin', actorType: 'ADMIN' },
+        action: 'DRIVER_DOCUMENT_REVIEWED',
+        entityType: 'DriverDocument',
+        entityId: req.params.docId,
+        oldValue: { status: doc.status, rejectionReason: doc.rejectionReason },
+        newValue: { status, rejectionReason: status === 'REJECTED' ? rejectionReason : null },
+      });
+      return changed;
     });
 
     res.json({ success: true, data: updated });
@@ -131,13 +143,24 @@ router.put('/:id/verify', async (req, res, next) => {
       return next(new AppError('Driver not found', 404));
     }
 
-    const updated = await prisma.driver.update({
-      where: { id: req.params.id },
-      data: {
-        verificationStatus,
-        isVerified: verificationStatus === 'APPROVED',
-      },
-      include: { documents: true, vehicle: true },
+    const updated = await prisma.$transaction(async (tx) => {
+      const changed = await tx.driver.update({
+        where: { id: req.params.id },
+        data: {
+          verificationStatus,
+          isVerified: verificationStatus === 'APPROVED',
+        },
+        include: { documents: true, vehicle: true },
+      });
+      await recordAudit(tx, {
+        actor: { actorId: 'admin', actorType: 'ADMIN' },
+        action: 'DRIVER_VERIFICATION_CHANGED',
+        entityType: 'Driver',
+        entityId: req.params.id,
+        oldValue: { verificationStatus: driver.verificationStatus, isVerified: driver.isVerified },
+        newValue: { verificationStatus, isVerified: verificationStatus === 'APPROVED' },
+      });
+      return changed;
     });
     console.log('[admin-drivers] verify — driverId:', req.params.id, 'verificationStatus →', updated.verificationStatus, 'isVerified:', updated.isVerified);
 

@@ -23,6 +23,7 @@ enum BookingStatus {
   DRIVER_ARRIVED
   PICKUP_DONE
   IN_TRANSIT
+  ARRIVED_AT_DROP
   DELIVERED
   CANCELLED
 }
@@ -188,6 +189,30 @@ enum TicketPriority {
   URGENT
 }
 
+enum WebhookEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  RETRYING
+  FAILED
+}
+
+enum DeliveryLifecycleActorType {
+  DRIVER
+  USER
+  SYSTEM
+}
+
+enum DeliveryLifecycleCommand {
+  ARRIVE_PICKUP
+  VERIFY_PICKUP_OTP
+  START_DELIVERY
+  ARRIVE_DROP
+  REQUEST_DROP_OTP
+  COMPLETE_DELIVERY
+  CANCEL_BEFORE_PICKUP
+}
+
 // ── Models ─────────────────────────────────────────────
 
 model User {
@@ -200,6 +225,9 @@ model User {
   isVerified   Boolean   @default(false)
   referralCode String?   @unique
   stripeCustomerId String? @unique
+  deletedAt    DateTime?
+  privacyConsentAt DateTime?
+  privacyPolicyVersion String?
   createdAt    DateTime  @default(now())
 
   addresses      Address[]
@@ -471,6 +499,83 @@ model Booking {
   supportTickets    SupportTicket[]
   invoice           Invoice?
   bookingRejections BookingRejection[]
+  idempotencyKeys   IdempotencyKey[]
+  lifecycleEvents   DeliveryLifecycleEvent[]
+}
+
+model DeliveryLifecycleEvent {
+  id                       String                     @id @default(uuid())
+  bookingId                String
+  actorType                DeliveryLifecycleActorType
+  actorId                  String
+  command                  DeliveryLifecycleCommand
+  fromStatus               BookingStatus?
+  toStatus                 BookingStatus?
+  success                  Boolean                    @default(false)
+  failureCode              String?
+  message                  String                     @default("")
+  latitude                 Float?
+  longitude                Float?
+  accuracyMeters           Float?
+  distanceToExpectedMeters Float?
+  metadata                 Json?
+  createdAt                DateTime                   @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId, createdAt])
+  @@index([actorType, actorId, createdAt])
+  @@index([command, createdAt])
+  @@index([success, createdAt])
+}
+
+model IdempotencyKey {
+  id        String   @id @default(uuid())
+  key       String
+  userId    String
+  bookingId String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@unique([userId, key])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actorType  String
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model WebhookEvent {
+  id              String             @id @default(uuid())
+  provider        String
+  providerEventId String
+  eventType       String
+  payload         Json
+  status          WebhookEventStatus @default(PENDING)
+  retryCount      Int                @default(0)
+  nextAttemptAt   DateTime?
+  lastError       String?
+  processedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([provider, providerEventId])
+  @@index([status, nextAttemptAt])
+  @@index([eventType, createdAt])
 }
 
 model BookingRejection {

@@ -32,6 +32,11 @@ function buildUserBookingMessage(booking, eventType) {
         title: 'Delivery in transit',
         body: 'Your shipment is on the way.',
       };
+    case 'ARRIVED_AT_DROP':
+      return {
+        title: 'Driver at drop-off',
+        body: 'Your driver has arrived at the delivery location.',
+      };
     case 'DELIVERED':
       return {
         title: 'Delivery complete',

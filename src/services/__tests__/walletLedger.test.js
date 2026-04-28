@@ -10,6 +10,9 @@ describe('Wallet Ledger — Booking payment reservation', () => {
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'txn-1' }),
       },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
     };
 
     await reserveBookingPayment(tx, 'user-1', 'booking-1', 'ORD-000123', 25);
@@ -27,6 +30,12 @@ describe('Wallet Ledger — Booking payment reservation', () => {
         referenceId: 'booking-1',
       },
     });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'WALLET_PAYMENT',
+        entityId: 'booking-1',
+      }),
+    });
   });
 
   test('rejects payment when wallet balance is insufficient', async () => {
@@ -36,6 +45,9 @@ describe('Wallet Ledger — Booking payment reservation', () => {
         update: jest.fn(),
       },
       walletTransaction: {
+        create: jest.fn(),
+      },
+      auditLog: {
         create: jest.fn(),
       },
     };

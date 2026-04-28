@@ -80,6 +80,29 @@ async function authenticate(req, res, next) {
   }
 }
 
+async function resolveAuthenticatedUserFromToken(token) {
+  const decoded = await verifyToken(token);
+  const email = decoded.email;
+  if (!email) {
+    const err = new AppError('Invalid token payload', 401);
+    throw err;
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    const err = new AppError('User not found. Please sync your account first.', 401);
+    throw err;
+  }
+
+  return {
+    userId: user.id,
+    supabaseId: decoded.sub,
+    email: user.email,
+    name: user.name,
+    phone: user.phone,
+  };
+}
+
 // Lightweight version that only verifies JWT without DB lookup
 async function authenticateToken(req, res, next) {
   const header = req.headers.authorization;
@@ -119,4 +142,4 @@ async function authenticateToken(req, res, next) {
   }
 }
 
-module.exports = { authenticate, authenticateToken };
+module.exports = { authenticate, authenticateToken, resolveAuthenticatedUserFromToken };

@@ -4,6 +4,7 @@
 
 const { fromMinorUnits } = require('../lib/money');
 const { REFERRAL_REWARD_AMOUNT } = require('./businessConfig');
+const { recordAudit } = require('./auditLog');
 
 // ── Reserve booking payment (debit user wallet) ─────────────
 
@@ -36,6 +37,13 @@ async function reserveBookingPayment(tx, userId, bookingId, orderCode, amount) {
       referenceId: bookingId,
     },
   });
+  await recordAudit(tx, {
+    actor: { actorId: userId, actorType: 'USER' },
+    action: 'WALLET_PAYMENT',
+    entityType: 'Booking',
+    entityId: bookingId,
+    newValue: { walletId: wallet.id, amount: -amount, orderCode },
+  });
 
   return wallet;
 }
@@ -46,12 +54,12 @@ async function refundBooking(prisma, userId, bookingId, amount) {
   const wallet = await prisma.wallet.findUnique({ where: { userId } });
   if (!wallet) return;
 
-  await prisma.$transaction([
-    prisma.wallet.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.wallet.update({
       where: { id: wallet.id },
       data: { balance: { increment: amount } },
-    }),
-    prisma.walletTransaction.create({
+    });
+    await tx.walletTransaction.create({
       data: {
         walletId: wallet.id,
         type: 'REFUND',
@@ -59,12 +67,19 @@ async function refundBooking(prisma, userId, bookingId, amount) {
         description: 'Booking cancellation refund',
         referenceId: bookingId,
       },
-    }),
-    prisma.booking.update({
+    });
+    await tx.booking.update({
       where: { id: bookingId },
       data: { paymentStatus: 'REFUNDED' },
-    }),
-  ]);
+    });
+    await recordAudit(tx, {
+      actor: { actorId: userId, actorType: 'USER' },
+      action: 'WALLET_REFUND',
+      entityType: 'Booking',
+      entityId: bookingId,
+      newValue: { walletId: wallet.id, amount },
+    });
+  });
 }
 
 // ── Credit Stripe top-up ────────────────────────────────────
@@ -83,6 +98,17 @@ async function creditStripeTopUp(tx, topUp) {
       amount: fromMinorUnits(topUp.amountMinor),
       description: 'Stripe wallet top-up',
       referenceId: topUp.stripePaymentIntentId,
+      stripePaymentIntentId: topUp.stripePaymentIntentId,
+    },
+  });
+  await recordAudit(tx, {
+    actor: { actorId: topUp.userId, actorType: 'USER' },
+    action: 'WALLET_TOP_UP',
+    entityType: 'WalletTopUpPayment',
+    entityId: topUp.id,
+    newValue: {
+      walletId: wallet.id,
+      amount: fromMinorUnits(topUp.amountMinor),
       stripePaymentIntentId: topUp.stripePaymentIntentId,
     },
   });
@@ -157,6 +183,13 @@ async function payBookingFromWallet(tx, userId, booking) {
       description: 'Payment for booking',
       referenceId: booking.id,
     },
+  });
+  await recordAudit(tx, {
+    actor: { actorId: userId, actorType: 'USER' },
+    action: 'WALLET_PAYMENT',
+    entityType: 'Booking',
+    entityId: booking.id,
+    newValue: { walletId: wallet.id, amount: -amount },
   });
   await tx.booking.update({
     where: { id: booking.id },

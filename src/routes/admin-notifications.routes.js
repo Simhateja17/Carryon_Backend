@@ -7,6 +7,7 @@ const { generateNextOrderCode, isOrderCodeConflict } = require('../services/book
 const { generatePickupOtp } = require('../services/deliveryOtp');
 const { notifyDriversForAdminBooking } = require('../services/dispatch');
 const { VALID_VEHICLE_TYPES, VALID_PAYMENT_METHODS } = require('../services/businessConfig');
+const { recordAudit } = require('../services/auditLog');
 
 const router = Router();
 const FALLBACK_TEST_USER_EMAIL = 'admin.test.rider@carryon.local';
@@ -145,7 +146,7 @@ router.post('/ride-request', async (req, res, next) => {
 
           const orderCode = await generateNextOrderCode(tx);
 
-          return tx.booking.create({
+          const created = await tx.booking.create({
             data: {
               orderCode,
               userId: testUser.id,
@@ -166,6 +167,19 @@ router.post('/ride-request', async (req, res, next) => {
               deliveryAddress: true,
             },
           });
+          await recordAudit(tx, {
+            actor: { actorId: 'admin', actorType: 'ADMIN' },
+            action: 'ADMIN_BOOKING_CREATED',
+            entityType: 'Booking',
+            entityId: created.id,
+            newValue: {
+              status: created.status,
+              vehicleType,
+              finalPrice: parsedPrice,
+              driverIds,
+            },
+          });
+          return created;
         });
         break;
       } catch (err) {

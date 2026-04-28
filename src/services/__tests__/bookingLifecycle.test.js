@@ -32,8 +32,10 @@ describe('Booking Lifecycle — State Machine', () => {
     expect(canTransition('CANCELLED', 'SEARCHING_DRIVER')).toBe(false);
   });
 
-  test('IN_TRANSIT → DELIVERED is allowed', () => {
-    expect(canTransition('IN_TRANSIT', 'DELIVERED')).toBe(true);
+  test('IN_TRANSIT → ARRIVED_AT_DROP is allowed before delivery', () => {
+    expect(canTransition('IN_TRANSIT', 'ARRIVED_AT_DROP')).toBe(true);
+    expect(canTransition('ARRIVED_AT_DROP', 'DELIVERED')).toBe(true);
+    expect(canTransition('IN_TRANSIT', 'DELIVERED')).toBe(false);
   });
 
   test('DRIVER_ASSIGNED → SEARCHING_DRIVER is allowed (driver cancel re-queues)', () => {
@@ -50,7 +52,7 @@ describe('Booking Lifecycle — State Machine', () => {
   test('every status has an entry in ALLOWED_TRANSITIONS', () => {
     const allStatuses = [
       'PENDING', 'SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'DRIVER_ARRIVED',
-      'PICKUP_DONE', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED',
+      'PICKUP_DONE', 'IN_TRANSIT', 'ARRIVED_AT_DROP', 'DELIVERED', 'CANCELLED',
     ];
     for (const status of allStatuses) {
       expect(ALLOWED_TRANSITIONS).toHaveProperty(status);

@@ -7,6 +7,11 @@ const {
   upsertPushDevice,
   removePushDevice,
 } = require('../lib/pushDevices');
+const {
+  exportUserAccount,
+  anonymizeUserAccount,
+  recordPrivacyConsent,
+} = require('../services/privacyAccount');
 
 const router = Router();
 router.use(authenticate);
@@ -60,6 +65,27 @@ router.get('/me/stats', async (req, res, next) => {
         ratingCount: ratingResult._count.rating || 0,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/users/me/export
+router.get('/me/export', async (req, res, next) => {
+  try {
+    const accountExport = await exportUserAccount(req.user.userId);
+    if (!accountExport) return next(new AppError('User not found', 404));
+    res.json({ success: true, data: accountExport });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/me/privacy-consent
+router.post('/me/privacy-consent', async (req, res, next) => {
+  try {
+    const consent = await recordPrivacyConsent(req.user.userId, req.body?.policyVersion);
+    res.json({ success: true, data: consent });
   } catch (err) {
     next(err);
   }
@@ -127,6 +153,17 @@ router.delete('/me/push-token', async (req, res, next) => {
     });
 
     res.json({ success: true, data: { tokenRegistered: false, deviceId } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/users/me
+router.delete('/me', async (req, res, next) => {
+  try {
+    const result = await anonymizeUserAccount(req.user.userId);
+    if (!result) return next(new AppError('User not found', 404));
+    res.json({ success: true, data: result });
   } catch (err) {
     next(err);
   }
