@@ -10,16 +10,12 @@ const client = jwksClient({
   cacheMaxAge: 600000,
 });
 
-console.log('[DriverAuth] JWKS URI:', `${process.env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`);
-
 function getKey(header, callback) {
-  console.log('[DriverAuth] Getting signing key for kid:', header.kid);
   client.getSigningKey(header.kid, (err, key) => {
     if (err) {
       console.error('[DriverAuth] Error getting signing key:', err.message);
       return callback(err);
     }
-    console.log('[DriverAuth] Successfully got signing key');
     callback(null, key.getPublicKey());
   });
 }
@@ -31,7 +27,6 @@ function verifyToken(token) {
         console.error('[DriverAuth] Token verification failed:', err.message);
         return reject(err);
       }
-      console.log('[DriverAuth] Token verified successfully for email:', decoded.email);
       resolve(decoded);
     });
   });
@@ -50,7 +45,6 @@ async function authenticateDriver(req, res, next) {
 
   try {
     const token = header.split(' ')[1];
-    console.log('[DriverAuth] Verifying token (first 50 chars):', token.substring(0, 50) + '...');
     
     const decoded = await verifyToken(token);
     const email = decoded.email;

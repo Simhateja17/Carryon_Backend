@@ -2,37 +2,24 @@
 // Owns OTP generation, TTL, resend cooldown, verification
 // (both admin-stored and Supabase email), and payload shaping.
 
-const { createClient } = require('@supabase/supabase-js');
+const { getSupabaseAdmin } = require('../lib/supabase');
+const { numericOtp } = require('../lib/otp');
+const { maskEmail } = require('../lib/maskEmail');
 const {
   DELIVERY_OTP_LENGTH,
   DELIVERY_OTP_TTL_MS,
   DELIVERY_OTP_RESEND_COOLDOWN_MS,
 } = require('./businessConfig');
 
-// ── Supabase admin client (lazy) ────────────────────────────
-
-let _supabaseAdmin;
-function getSupabaseAdmin() {
-  if (!_supabaseAdmin) {
-    _supabaseAdmin = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY
-    );
-  }
-  return _supabaseAdmin;
-}
-
 // ── OTP generation ──────────────────────────────────────────
 
 function generateDeliveryOtp() {
-  return Math.floor(
-    10 ** (DELIVERY_OTP_LENGTH - 1) + Math.random() * 9 * 10 ** (DELIVERY_OTP_LENGTH - 1)
-  ).toString();
+  return numericOtp(DELIVERY_OTP_LENGTH);
 }
 
 // Short OTP for user-app booking creation
 function generatePickupOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
+  return numericOtp(4);
 }
 
 // ── TTL / Cooldown window ───────────────────────────────────
@@ -63,15 +50,6 @@ function deliveryOtpWindow(sentAt, now = new Date()) {
 
 function isDeliveryOtpActive(sentAt, now = new Date()) {
   return !!sentAt && now < new Date(new Date(sentAt).getTime() + DELIVERY_OTP_TTL_MS);
-}
-
-// ── Email masking ───────────────────────────────────────────
-
-function maskEmail(email = '') {
-  const [local = '', domain = ''] = String(email).split('@');
-  if (!local || !domain) return email;
-  const visible = local.slice(0, 2);
-  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
 }
 
 // ── Payload shaping (for driver app responses) ──────────────

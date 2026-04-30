@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const { VALID_VEHICLE_TYPES } = require('../services/businessConfig');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -11,6 +12,9 @@ router.post('/', async (req, res, next) => {
   try {
     const { type, make, model, year, licensePlate, color } = req.body;
     console.log('[driver-vehicle] POST upsert — driverId:', req.driver.id, 'type:', type, 'licensePlate:', licensePlate);
+    if (type && !VALID_VEHICLE_TYPES.includes(type)) {
+      return next(new AppError(`Invalid type. Must be one of: ${VALID_VEHICLE_TYPES.join(', ')}`, 400));
+    }
 
     const vehicle = await prisma.driverVehicle.upsert({
       where: { driverId: req.driver.id },

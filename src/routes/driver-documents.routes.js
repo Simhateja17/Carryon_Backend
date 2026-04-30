@@ -1,9 +1,9 @@
 const { Router } = require('express');
 const multer = require('multer');
-const { createClient } = require('@supabase/supabase-js');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const { uploadToSupabase } = require('../lib/supabase');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -19,14 +19,6 @@ const upload = multer({
     }
   },
 });
-
-let _supabase;
-function getSupabase() {
-  if (!_supabase) {
-    _supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-  }
-  return _supabase;
-}
 
 const VALID_DOCUMENT_TYPES = new Set([
   'DRIVERS_LICENSE',
@@ -82,23 +74,12 @@ router.post('/', upload.single('image'), async (req, res, next) => {
       const ext = req.file.originalname.split('.').pop() || 'jpg';
       const fileName = `driver-documents/${req.driver.id}/${type}_${Date.now()}.${ext}`;
 
-      const { error } = await getSupabase().storage
-        .from('driver-documents')
-        .upload(fileName, req.file.buffer, {
-          contentType: req.file.mimetype,
-          upsert: true,
-        });
-
-      if (error) {
+      try {
+        imageUrl = await uploadToSupabase('driver-documents', req.file, fileName, { upsert: true });
+      } catch (error) {
         console.error('Supabase upload error:', error);
         return next(new AppError('Failed to upload document', 500));
       }
-
-      const { data: urlData } = getSupabase().storage
-        .from('driver-documents')
-        .getPublicUrl(fileName);
-      
-      imageUrl = urlData.publicUrl;
     }
 
     if (!VALID_DOCUMENT_TYPES.has(type)) {
@@ -152,23 +133,17 @@ router.put('/:id', upload.single('image'), async (req, res, next) => {
     const ext = req.file.originalname.split('.').pop() || 'jpg';
     const fileName = `driver-documents/${req.driver.id}/${doc.type}_${Date.now()}.${ext}`;
 
-    const { error } = await getSupabase().storage
-      .from('driver-documents')
-      .upload(fileName, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: true,
-      });
-
-    if (error) return next(new AppError('Failed to upload document', 500));
-
-    const { data: urlData } = getSupabase().storage
-      .from('driver-documents')
-      .getPublicUrl(fileName);
+    let publicUrl;
+    try {
+      publicUrl = await uploadToSupabase('driver-documents', req.file, fileName, { upsert: true });
+    } catch (_error) {
+      return next(new AppError('Failed to upload document', 500));
+    }
 
     const updated = await prisma.driverDocument.update({
       where: { id: req.params.id },
       data: {
-        imageUrl: urlData.publicUrl,
+        imageUrl: publicUrl,
         expiryDate: req.body.expiryDate || doc.expiryDate,
         status: 'PENDING',
         rejectionReason: null,

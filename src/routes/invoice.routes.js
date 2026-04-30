@@ -1,7 +1,9 @@
 const { Router } = require('express');
+const { randomInt } = require('crypto');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { COMPANY_INVOICE_PROFILE } = require('../services/businessConfig');
 
 const router = Router();
 router.use(authenticate);
@@ -11,7 +13,7 @@ function generateInvoiceNumber() {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
-  const rand = Math.floor(1000 + Math.random() * 9000);
+  const rand = randomInt(1000, 10000);
   return `CO-${y}${m}${d}-${rand}`;
 }
 
@@ -140,14 +142,7 @@ router.get('/:bookingId/detail', async (req, res, next) => {
           email: booking.user.email,
           phone: booking.user.phone,
         },
-        company: {
-          name: 'CarryOn Logistics Sdn Bhd',
-          registration: '202301XXXXXX (XXXXXXX-X)',
-          sstNo: 'W10-XXXX-XXXXXXXX',
-          address: 'Level XX, Tower X, KLCC\n50088 Kuala Lumpur, Malaysia',
-          phone: '+60 3-XXXX XXXX',
-          email: 'billing@carryon.my',
-        },
+        company: COMPANY_INVOICE_PROFILE,
       },
     });
   } catch (err) {

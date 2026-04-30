@@ -26,8 +26,20 @@ const OFFER_EXPIRY_MS = 60 * 1000;
 const DELIVERY_OTP_LENGTH = 6;
 const DELIVERY_OTP_TTL_MS = 10 * 60 * 1000;
 const DELIVERY_OTP_RESEND_COOLDOWN_MS = 30 * 1000;
+const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5);
+const OTP_VERIFY_LOCK_MS = Number(process.env.OTP_VERIFY_LOCK_MS || 10 * 60 * 1000);
 
 const REFERRAL_REWARD_AMOUNT = 5.0; // RM 5
+const OFFLOADING_FEE = Number(process.env.OFFLOADING_FEE || 30);
+const BOOKING_TAX_RATE = Number(process.env.BOOKING_TAX_RATE || 0.05);
+const COMPANY_INVOICE_PROFILE = {
+  name: process.env.COMPANY_NAME || 'CarryOn Logistics Sdn Bhd',
+  registration: process.env.COMPANY_REGISTRATION || '',
+  sstNo: process.env.COMPANY_SST_NO || '',
+  address: process.env.COMPANY_ADDRESS || '',
+  phone: process.env.COMPANY_PHONE || '',
+  email: process.env.COMPANY_BILLING_EMAIL || 'billing@carryon.my',
+};
 
 module.exports = {
   VEHICLE_RATE_PER_KM,
@@ -39,5 +51,10 @@ module.exports = {
   DELIVERY_OTP_LENGTH,
   DELIVERY_OTP_TTL_MS,
   DELIVERY_OTP_RESEND_COOLDOWN_MS,
+  OTP_MAX_VERIFY_ATTEMPTS,
+  OTP_VERIFY_LOCK_MS,
   REFERRAL_REWARD_AMOUNT,
+  OFFLOADING_FEE,
+  BOOKING_TAX_RATE,
+  COMPANY_INVOICE_PROFILE,
 };

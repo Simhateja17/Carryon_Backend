@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
+const prisma = require('./lib/prisma');
 const {
   legacyApiHeaders,
   mountVersionedMiddleware,
@@ -24,7 +25,7 @@ const corsOptions = allowedOrigins.length > 0
   : (process.env.NODE_ENV === 'production' ? { origin: false } : undefined);
 app.use(cors(corsOptions));
 app.use(helmet());
-app.use(morgan('dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use('/api/v1/stripe/webhook', express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
 app.use('/api/stripe/webhook', legacyApiHeaders, express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
 app.use(express.json({ limit: '100kb' }));
@@ -59,7 +60,15 @@ mountVersionedMiddleware(app, '/wallet/pay', walletLimiter);
 mountVersionedMiddleware(app, '/location', locationLimiter);
 
 // Health check
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', database: 'ok' });
+  } catch (err) {
+    console.error('[health] Database connectivity check failed:', err.message);
+    res.status(503).json({ status: 'error', database: 'unreachable' });
+  }
+});
 
 // Routes
 console.log('[app] Mounting routes...');

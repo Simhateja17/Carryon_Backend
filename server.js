@@ -4,6 +4,7 @@ const http = require('http');
 const app = require('./src/app');
 const { attachLiveTracking } = require('./src/services/liveTracking');
 const { startWebhookRetryLoop } = require('./src/services/webhookInbox');
+const { startDriverPayoutReconciliationLoop } = require('./src/services/driverPayoutReconciliation');
 
 const DISCOVERY_PORT = 4999;
 
@@ -40,5 +41,6 @@ findAvailablePort(Number(preferredPort)).then(PORT => {
     console.log(`CarryOn backend running on port ${PORT}`);
     startDiscoveryServer(PORT);
     startWebhookRetryLoop();
+    startDriverPayoutReconciliationLoop();
   });
 });

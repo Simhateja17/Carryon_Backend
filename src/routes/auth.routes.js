@@ -4,31 +4,15 @@ const prisma = require('../lib/prisma');
 const { authenticateToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { OTP_LENGTH, isValidOtp, normalizeOtp } = require('../lib/otp');
+const { getSupabaseAdmin } = require('../lib/supabase');
+const { maskEmail } = require('../lib/maskEmail');
 
 const router = Router();
-const maskEmail = (email = '') => {
-  const [local = '', domain = ''] = String(email).split('@');
-  if (!local || !domain) return email;
-  const visible = local.slice(0, 2);
-  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
-};
 
 const getBearerToken = (header = '') => {
   if (!header || !header.startsWith('Bearer ')) return null;
   return header.split(' ')[1] || null;
 };
-
-// Supabase Admin client for sending OTPs
-let _supabaseAdmin;
-function getSupabaseAdmin() {
-  if (!_supabaseAdmin) {
-    _supabaseAdmin = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY
-    );
-  }
-  return _supabaseAdmin;
-}
 
 let _supabaseAuthClient;
 function getSupabaseAuthClient() {

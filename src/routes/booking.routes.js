@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { notifyUserBookingEvent } = require('../lib/pushNotifications');
+const { parseBody } = require('../lib/validation');
 const {
   generateNextOrderCode,
   isOrderCodeConflict,
@@ -12,7 +13,7 @@ const {
   generatePickupOtp,
 } = require('../services/bookingLifecycle');
 const { quoteBookingFare } = require('../services/bookingPricing');
-const { reserveBookingPayment, refundBooking } = require('../services/walletLedger');
+const { reserveBookingPayment, refundBookingTx } = require('../services/walletLedger');
 const { notifyNearbyDrivers } = require('../services/dispatch');
 const { recordAudit } = require('../services/auditLog');
 const { executeUserLifecycleCommand } = require('../services/deliveryLifecycle');
@@ -22,6 +23,13 @@ const {
   idempotencyExpiresAt,
   isIdempotencyConflict,
 } = require('../services/idempotency');
+const {
+  bookingCancelSchema,
+  bookingCreateSchema,
+  bookingQuoteSchema,
+  bookingStatusSchema,
+  bookingVerifyDeliverySchema,
+} = require('../validation/financialSchemas');
 
 const router = Router();
 router.use(authenticate);
@@ -32,6 +40,20 @@ const bookingIncludes = {
   driver: true,
 };
 const isEmail = (value = '') => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value).trim());
+
+function parseCoordinate(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function requireCoordinates(address, label) {
+  const latitude = parseCoordinate(address?.latitude);
+  const longitude = parseCoordinate(address?.longitude);
+  if (latitude == null || longitude == null) {
+    throw new AppError(`Valid ${label} latitude and longitude are required`, 400);
+  }
+  return { latitude, longitude };
+}
 
 async function findIdempotentBooking(userId, key) {
   const record = await prisma.idempotencyKey.findUnique({
@@ -52,14 +74,11 @@ router.post('/', async (req, res, next) => {
       vehicleType, scheduledTime,
       paymentMethod,
       senderName, senderPhone, receiverName, receiverPhone,
-      receiverEmail, deliveryMode, notes
-    } = req.body;
+      receiverEmail, deliveryMode, offloading, notes
+    } = parseBody(bookingCreateSchema, req.body);
 
     console.log('[booking] POST /api/bookings — userId:', req.user.userId, 'vehicleType:', vehicleType, 'paymentMethod:', paymentMethod || 'CASH', 'pickup:', pickupAddress?.address, 'delivery:', deliveryAddress?.address);
 
-    if (!pickupAddress || !deliveryAddress) {
-      return next(new AppError('pickupAddress and deliveryAddress are required', 400));
-    }
     const idempotencyKey = idempotencyKeyFromRequest(req);
     if (!validateIdempotencyKey(idempotencyKey)) {
       return next(new AppError('Idempotency-Key header is required for booking creation', 400));
@@ -76,7 +95,17 @@ router.post('/', async (req, res, next) => {
     if (!isEmail(recipientEmail)) {
       return next(new AppError('A valid recipient email is required for delivery OTP.', 400));
     }
-    const quote = await quoteBookingFare({ pickupAddress, deliveryAddress, vehicleType, deliveryMode });
+    const pickupCoords = requireCoordinates(pickupAddress, 'pickup');
+    const deliveryCoords = requireCoordinates(deliveryAddress, 'delivery');
+    const normalizedPickupAddress = { ...pickupAddress, ...pickupCoords };
+    const normalizedDeliveryAddress = { ...deliveryAddress, ...deliveryCoords };
+    const quote = await quoteBookingFare({
+      pickupAddress: normalizedPickupAddress,
+      deliveryAddress: normalizedDeliveryAddress,
+      vehicleType,
+      deliveryMode,
+      offloading,
+    });
     const normalizedPaymentMethod = String(paymentMethod || 'WALLET').toUpperCase();
     if (normalizedPaymentMethod !== 'WALLET') {
       return next(new AppError('Wallet payment is required. Please top up your wallet before booking.', 400));
@@ -89,9 +118,9 @@ router.post('/', async (req, res, next) => {
           const pickup = await tx.address.create({
             data: {
               userId: req.user.userId,
-              address: pickupAddress.address || '',
-              latitude: pickupAddress.latitude || 0,
-              longitude: pickupAddress.longitude || 0,
+              address: normalizedPickupAddress.address || '',
+              latitude: normalizedPickupAddress.latitude,
+              longitude: normalizedPickupAddress.longitude,
               contactName: pickupAddress.contactName || senderName || '',
               contactPhone: pickupAddress.contactPhone || senderPhone || '',
               contactEmail: pickupAddress.contactEmail || '',
@@ -104,9 +133,9 @@ router.post('/', async (req, res, next) => {
           const delivery = await tx.address.create({
             data: {
               userId: req.user.userId,
-              address: deliveryAddress.address || '',
-              latitude: deliveryAddress.latitude || 0,
-              longitude: deliveryAddress.longitude || 0,
+              address: normalizedDeliveryAddress.address || '',
+              latitude: normalizedDeliveryAddress.latitude,
+              longitude: normalizedDeliveryAddress.longitude,
               contactName: deliveryAddress.contactName || receiverName || '',
               contactPhone: deliveryAddress.contactPhone || receiverPhone || '',
               contactEmail: recipientEmail,
@@ -197,17 +226,15 @@ router.post('/quote', async (req, res, next) => {
       deliveryAddress,
       vehicleType,
       deliveryMode,
-    } = req.body;
-
-    if (!pickupAddress || !deliveryAddress) {
-      return next(new AppError('pickupAddress and deliveryAddress are required', 400));
-    }
+      offloading,
+    } = parseBody(bookingQuoteSchema, req.body);
 
     const quote = await quoteBookingFare({
       pickupAddress,
       deliveryAddress,
       vehicleType,
       deliveryMode,
+      offloading,
     });
 
     res.json({
@@ -267,9 +294,8 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/bookings/:id/verify-delivery
 router.post('/:id/verify-delivery', async (req, res, next) => {
   try {
-    const { otp, deliveryProofUrl } = req.body;
+    const { otp, deliveryProofUrl } = parseBody(bookingVerifyDeliverySchema, req.body);
     console.log('[booking] POST verify-delivery — userId:', req.user.userId, 'bookingId:', req.params.id);
-    if (!otp) return next(new AppError('OTP is required', 400));
     await executeUserLifecycleCommand({
       bookingId: req.params.id,
       user: req.user,
@@ -295,13 +321,12 @@ router.post('/:id/verify-delivery', async (req, res, next) => {
 // PUT /api/bookings/:id/status
 router.put('/:id/status', async (req, res, next) => {
   try {
-    const { status, eta } = req.body;
+    const { status, eta } = parseBody(bookingStatusSchema, req.body);
     console.log('[booking] PUT status — userId:', req.user.userId, 'bookingId:', req.params.id, 'newStatus:', status);
-    if (!status) return next(new AppError('Status is required', 400));
 
     const validStatuses = [
       'PENDING', 'SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'DRIVER_ARRIVED',
-      'PICKUP_DONE', 'IN_TRANSIT', 'ARRIVED_AT_DROP', 'DELIVERED', 'CANCELLED',
+      'PICKUP_DONE', 'IN_TRANSIT', 'ARRIVED_AT_DROP',
     ];
     if (!validStatuses.includes(status)) {
       return next(new AppError('Invalid status', 400));
@@ -316,12 +341,8 @@ router.put('/:id/status', async (req, res, next) => {
     }
 
     const updateData = { status };
-    if (eta !== undefined) updateData.eta = eta;
-    if (status === 'DELIVERED') {
-      updateData.deliveredAt = new Date();
-    }
-    if (status === 'CANCELLED') {
-      updateData.paymentStatus = 'REFUNDED';
+    if (eta !== undefined) {
+      updateData.eta = eta;
     }
 
     const updatedBooking = await prisma.$transaction(async (tx) => {
@@ -417,7 +438,7 @@ router.get('/:id/eta', async (req, res, next) => {
 // POST /api/bookings/:id/cancel
 router.post('/:id/cancel', async (req, res, next) => {
   try {
-    const { reason } = req.body;
+    const { reason } = parseBody(bookingCancelSchema, req.body);
     console.log('[booking] POST cancel — userId:', req.user.userId, 'bookingId:', req.params.id, 'reason:', reason || 'none');
 
     const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
@@ -429,9 +450,10 @@ router.post('/:id/cancel', async (req, res, next) => {
     }
 
     const updatedBooking = await prisma.$transaction(async (tx) => {
+      const shouldRefund = booking.paymentMethod === 'WALLET' && booking.paymentStatus === 'COMPLETED';
       const updated = await tx.booking.update({
         where: { id: req.params.id },
-        data: { status: 'CANCELLED' },
+        data: { status: 'CANCELLED', ...(shouldRefund && { paymentStatus: 'REFUNDED' }) },
         include: bookingIncludes,
       });
       await recordAudit(tx, {
@@ -442,16 +464,14 @@ router.post('/:id/cancel', async (req, res, next) => {
         oldValue: { status: booking.status },
         newValue: { status: 'CANCELLED', reason: reason || '' },
       });
+      if (shouldRefund) {
+        const amount = booking.finalPrice || booking.estimatedPrice;
+        console.log('[booking] Cancel refund — bookingId:', req.params.id, 'refund amount:', amount);
+        await refundBookingTx(tx, req.user.userId, req.params.id, amount);
+      }
       return updated;
     });
     console.log('[booking] Cancelled — bookingId:', req.params.id, 'previousStatus:', booking.status);
-
-    // Refund wallet if paid via wallet
-    if (booking.paymentMethod === 'WALLET' && booking.paymentStatus === 'COMPLETED') {
-      const amount = booking.finalPrice || booking.estimatedPrice;
-      console.log('[booking] Cancel refund — bookingId:', req.params.id, 'refund amount:', amount);
-      await refundBooking(prisma, req.user.userId, req.params.id, amount);
-    }
 
     await notifyUserBookingEvent(updatedBooking, 'CANCELLED');
 

@@ -88,21 +88,27 @@ router.post('/apply', async (req, res, next) => {
     discount = Math.round(discount * 100) / 100;
 
     console.log('[promo] apply — code:', coupon.code, 'bookingId:', bookingId, 'discount:', discount, 'finalPrice:', booking.estimatedPrice - discount);
-    const [updatedBooking] = await prisma.$transaction([
-      prisma.booking.update({
+    const updatedBooking = await prisma.$transaction(async (tx) => {
+      const existingUserCoupon = await tx.userCoupon.findUnique({
+        where: { userId_couponId: { userId: req.user.userId, couponId: coupon.id } },
+      });
+      const updated = await tx.booking.update({
         where: { id: bookingId },
         data: { promoCode: coupon.code, discountAmount: discount },
-      }),
-      prisma.coupon.update({
-        where: { id: coupon.id },
-        data: { usedCount: { increment: 1 } },
-      }),
-      prisma.userCoupon.upsert({
+      });
+      if (!existingUserCoupon) {
+        await tx.coupon.update({
+          where: { id: coupon.id },
+          data: { usedCount: { increment: 1 } },
+        });
+      }
+      await tx.userCoupon.upsert({
         where: { userId_couponId: { userId: req.user.userId, couponId: coupon.id } },
         create: { userId: req.user.userId, couponId: coupon.id, bookingId, usedAt: new Date() },
         update: { bookingId, usedAt: new Date() },
-      }),
-    ]);
+      });
+      return updated;
+    });
 
     res.json({ success: true, data: { discount, finalPrice: booking.estimatedPrice - discount } });
   } catch (err) {

@@ -4,7 +4,10 @@ const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { getStripe, stripeCurrency } = require('../lib/stripe');
 const { toMinorUnits, fromMinorUnits } = require('../lib/money');
+const { parsePagination } = require('../lib/pagination');
+const { parseBody } = require('../lib/validation');
 const { payBookingFromWallet } = require('../services/walletLedger');
+const { walletPaySchema, walletTopupIntentSchema } = require('../validation/financialSchemas');
 
 const router = Router();
 router.use(authenticate);
@@ -38,7 +41,7 @@ router.get('/', async (req, res, next) => {
 // POST /api/wallet/topup/intent
 router.post('/topup/intent', async (req, res, next) => {
   try {
-    const { amount } = req.body;
+    const { amount } = parseBody(walletTopupIntentSchema, req.body);
     const amountMinor = toMinorUnits(amount);
     const minMinor = toMinorUnits(process.env.WALLET_TOPUP_MIN || 10);
     const maxMinor = toMinorUnits(process.env.WALLET_TOPUP_MAX || 1000);
@@ -118,9 +121,8 @@ router.post('/topup', async (req, res, next) => {
 // POST /api/wallet/pay
 router.post('/pay', async (req, res, next) => {
   try {
-    const { bookingId } = req.body;
+    const { bookingId } = parseBody(walletPaySchema, req.body);
     console.log('[wallet] POST pay — userId:', req.user.userId, 'bookingId:', bookingId);
-    if (!bookingId) return next(new AppError('Booking ID is required', 400));
 
     const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
     if (!booking || booking.userId !== req.user.userId) {
@@ -142,9 +144,7 @@ router.post('/pay', async (req, res, next) => {
 // GET /api/wallet/transactions
 router.get('/transactions', async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = parsePagination(req.query);
 
     const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.userId } });
     if (!wallet) return res.json({ success: true, data: { transactions: [], total: 0 } });

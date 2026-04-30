@@ -4,6 +4,8 @@ const { authenticateDriver, requireDriver } = require('../middleware/driverAuth'
 const { AppError } = require('../middleware/errorHandler');
 const { getStripe, stripeCurrency } = require('../lib/stripe');
 const { toMinorUnits, fromMinorUnits } = require('../lib/money');
+const { parseBody } = require('../lib/validation');
+const { driverWithdrawSchema } = require('../validation/financialSchemas');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -111,8 +113,8 @@ router.get('/status', async (req, res, next) => {
 
 router.post('/withdraw', async (req, res, next) => {
   try {
-    const amountMinor = toMinorUnits(req.body?.amount);
-    if (amountMinor <= 0) return next(new AppError('Invalid amount', 400));
+    const { amount: requestedAmount } = parseBody(driverWithdrawSchema, req.body);
+    const amountMinor = toMinorUnits(requestedAmount);
 
     const driver = await prisma.driver.findUnique({ where: { id: req.driver.id } });
     if (!driver?.stripeConnectAccountId) {
@@ -168,8 +170,9 @@ router.post('/withdraw', async (req, res, next) => {
       return { pending, transaction };
     });
 
+    let transfer;
     try {
-      const transfer = await stripe.transfers.create({
+      transfer = await stripe.transfers.create({
         amount: amountMinor,
         currency,
         destination: account.id,
@@ -181,27 +184,6 @@ router.post('/withdraw', async (req, res, next) => {
       }, {
         idempotencyKey: `driver-withdrawal-${result.pending.id}`,
       });
-
-      const updatedTransaction = await prisma.$transaction(async (tx) => {
-        const transaction = await tx.driverWalletTransaction.update({
-          where: { id: result.transaction.id },
-          data: {
-            status: 'COMPLETED',
-            stripeTransferId: transfer.id,
-          },
-        });
-        await tx.driverPayout.update({
-          where: { id: result.pending.id },
-          data: {
-            transactionId: transaction.id,
-            stripeTransferId: transfer.id,
-            status: 'COMPLETED',
-          },
-        });
-        return transaction;
-      });
-
-      res.json({ success: true, data: updatedTransaction });
     } catch (stripeErr) {
       await prisma.$transaction([
         prisma.driverWallet.update({
@@ -222,6 +204,27 @@ router.post('/withdraw', async (req, res, next) => {
       ]);
       return next(new AppError(stripeErr.message || 'Stripe transfer failed', 400));
     }
+
+    const updatedTransaction = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.driverWalletTransaction.update({
+        where: { id: result.transaction.id },
+        data: {
+          status: 'COMPLETED',
+          stripeTransferId: transfer.id,
+        },
+      });
+      await tx.driverPayout.update({
+        where: { id: result.pending.id },
+        data: {
+          transactionId: transaction.id,
+          stripeTransferId: transfer.id,
+          status: 'COMPLETED',
+        },
+      });
+      return transaction;
+    });
+
+    res.json({ success: true, data: updatedTransaction });
   } catch (err) {
     next(err);
   }

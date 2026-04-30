@@ -63,8 +63,8 @@ jest.mock('../../services/dispatch', () => ({
 
 jest.mock('../../services/bookingPricing', () => ({
   quoteBookingFare: jest.fn().mockResolvedValue({
-    estimatedPrice: 11.7,
-    price: 11.7,
+    estimatedPrice: 12.29,
+    price: 12.29,
     distance: 10,
     duration: 30,
     isEstimated: false,
@@ -75,8 +75,9 @@ jest.mock('../../services/bookingPricing', () => ({
       distance: 10,
       pricePerKm: 1.17,
       distanceFare: 11.7,
-      tax: 0,
-      total: 11.7,
+      offloadingFee: 0,
+      tax: 0.59,
+      total: 12.29,
     },
   }),
 }));
@@ -103,6 +104,7 @@ function bookingPayload() {
     },
     vehicleType: 'CAR',
     paymentMethod: 'WALLET',
+    offloading: false,
     distance: 10,
     duration: 30,
   };
@@ -291,6 +293,22 @@ describe('Booking route side effects', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  test('booking creation requires a real recipient email for delivery OTP', async () => {
+    const payload = bookingPayload();
+    payload.deliveryAddress.contactEmail = '';
+    payload.receiverEmail = 'not-an-email';
+
+    const response = await invokeRoute(require('../booking.routes'), 'POST', '/', {
+      method: 'POST',
+      body: payload,
+      headers: { 'idempotency-key': '22222222-2222-4222-8222-222222222222' },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe('A valid recipient email is required for delivery OTP.');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   test('booking quote uses backend pricing policy', async () => {
     const response = await invokeRoute(require('../booking.routes'), 'POST', '/quote', {
       body: {
@@ -306,8 +324,8 @@ describe('Booking route side effects', () => {
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
     expect(response.body.data).toEqual({
-      estimatedPrice: 11.7,
-      price: 11.7,
+      estimatedPrice: 12.29,
+      price: 12.29,
       distance: 10,
       duration: 30,
       breakdown: {
@@ -317,8 +335,9 @@ describe('Booking route side effects', () => {
         distance: 10,
         pricePerKm: 1.17,
         distanceFare: 11.7,
-        tax: 0,
-        total: 11.7,
+        offloadingFee: 0,
+        tax: 0.59,
+        total: 12.29,
       },
       isEstimated: false,
     });
@@ -357,52 +376,34 @@ describe('Booking route side effects', () => {
     });
     const cancelTx = {
       booking: {
-        update: jest.fn().mockResolvedValue({
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({
           id: 'booking-1',
           userId: 'user-1',
           status: 'CANCELLED',
           paymentMethod: 'WALLET',
-          paymentStatus: 'COMPLETED',
+          paymentStatus: 'REFUNDED',
           finalPrice: 25,
           estimatedPrice: 25,
-        }),
+          })
+          .mockResolvedValueOnce({
+            id: 'booking-1',
+            paymentStatus: 'REFUNDED',
+          }),
       },
-      auditLog: {
-        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
-      },
-    };
-    const refundTx = {
       wallet: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 10 }),
         update: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 35 }),
       },
       walletTransaction: {
         create: jest.fn().mockResolvedValue({ id: 'refund-1' }),
       },
-      booking: {
-        update: jest.fn().mockResolvedValue({
-          id: 'booking-1',
-          paymentStatus: 'REFUNDED',
-        }),
-      },
       auditLog: {
-        create: jest.fn().mockResolvedValue({ id: 'audit-2' }),
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
       },
     };
-    prisma.booking.update.mockResolvedValueOnce({
-        id: 'booking-1',
-        userId: 'user-1',
-        status: 'CANCELLED',
-        paymentMethod: 'WALLET',
-        paymentStatus: 'COMPLETED',
-        finalPrice: 25,
-        estimatedPrice: 25,
-      });
-    prisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 10 });
-    prisma.wallet.update.mockResolvedValue({ id: 'wallet-1', balance: 35 });
-    prisma.walletTransaction.create.mockResolvedValue({ id: 'refund-1' });
-    prisma.$transaction
-      .mockImplementationOnce((callback) => callback(cancelTx))
-      .mockImplementationOnce((callback) => callback(refundTx));
+    prisma.$transaction.mockImplementationOnce((callback) => callback(cancelTx));
 
     const response = await invokeRoute(require('../booking.routes'), 'POST', '/:id/cancel', {
       params: { id: 'booking-1' },
@@ -410,13 +411,13 @@ describe('Booking route side effects', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(refundTx.wallet.update).toHaveBeenCalledTimes(1);
-    expect(refundTx.wallet.update).toHaveBeenCalledWith({
+    expect(cancelTx.wallet.update).toHaveBeenCalledTimes(1);
+    expect(cancelTx.wallet.update).toHaveBeenCalledWith({
       where: { id: 'wallet-1' },
       data: { balance: { increment: 25 } },
     });
-    expect(refundTx.walletTransaction.create).toHaveBeenCalledTimes(1);
-    expect(refundTx.walletTransaction.create).toHaveBeenCalledWith({
+    expect(cancelTx.walletTransaction.create).toHaveBeenCalledTimes(1);
+    expect(cancelTx.walletTransaction.create).toHaveBeenCalledWith({
       data: {
         walletId: 'wallet-1',
         type: 'REFUND',
@@ -425,9 +426,22 @@ describe('Booking route side effects', () => {
         referenceId: 'booking-1',
       },
     });
-    expect(cancelTx.auditLog.create).toHaveBeenCalledTimes(1);
-    expect(refundTx.auditLog.create).toHaveBeenCalledTimes(1);
-    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(cancelTx.auditLog.create).toHaveBeenCalledTimes(2);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  test('generic user status route cannot complete or cancel bookings', async () => {
+    for (const status of ['DELIVERED', 'CANCELLED']) {
+      const response = await invokeRoute(require('../booking.routes'), 'PUT', '/:id/status', {
+        params: { id: 'booking-1' },
+        body: { status },
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe('Invalid status');
+    }
+    expect(prisma.booking.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
 

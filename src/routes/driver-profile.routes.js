@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const { setDriverOnlineStatus } = require('../services/driverOnlineTime');
 const {
   parsePushRegistrationBody,
   upsertPushDevice,
@@ -54,10 +55,7 @@ router.post('/toggle-online', async (req, res, next) => {
       return next(new AppError('isOnline must be a boolean', 400));
     }
     console.log('[driver-profile] POST toggle-online — driverId:', req.driver.id, 'isOnline →', isOnline);
-    const driver = await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { isOnline },
-    });
+    const driver = await setDriverOnlineStatus(req.driver.id, isOnline);
     console.log('[driver-profile] toggle-online — driverId:', req.driver.id, 'isOnline now:', driver.isOnline);
     res.json({ success: true, data: { isOnline: driver.isOnline } });
   } catch (err) {

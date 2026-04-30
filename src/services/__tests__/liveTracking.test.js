@@ -26,7 +26,7 @@ describe('Live Tracking — authorization', () => {
       where: {
         id: 'booking-1',
         userId: 'user-1',
-        status: { in: ['DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'PICKUP_DONE', 'IN_TRANSIT'] },
+        status: { in: ['DRIVER_ASSIGNED', 'DRIVER_ARRIVED', 'PICKUP_DONE', 'IN_TRANSIT', 'ARRIVED_AT_DROP'] },
       },
       select: {
         id: true,

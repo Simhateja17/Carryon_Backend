@@ -50,36 +50,72 @@ async function reserveBookingPayment(tx, userId, bookingId, orderCode, amount) {
 
 // ── Refund booking (credit user wallet) ─────────────────────
 
-async function refundBooking(prisma, userId, bookingId, amount) {
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
+async function refundBookingTx(tx, userId, bookingId, amount) {
+  const wallet = await tx.wallet.findUnique({ where: { userId } });
   if (!wallet) return;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: { increment: amount } },
-    });
-    await tx.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: 'REFUND',
-        amount,
-        description: 'Booking cancellation refund',
-        referenceId: bookingId,
-      },
-    });
-    await tx.booking.update({
-      where: { id: bookingId },
-      data: { paymentStatus: 'REFUNDED' },
-    });
-    await recordAudit(tx, {
-      actor: { actorId: userId, actorType: 'USER' },
-      action: 'WALLET_REFUND',
-      entityType: 'Booking',
-      entityId: bookingId,
-      newValue: { walletId: wallet.id, amount },
-    });
+  await tx.wallet.update({
+    where: { id: wallet.id },
+    data: { balance: { increment: amount } },
   });
+  await tx.walletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      type: 'REFUND',
+      amount,
+      description: 'Booking cancellation refund',
+      referenceId: bookingId,
+    },
+  });
+  await tx.booking.update({
+    where: { id: bookingId },
+    data: { paymentStatus: 'REFUNDED' },
+  });
+  await recordAudit(tx, {
+    actor: { actorId: userId, actorType: 'USER' },
+    action: 'WALLET_REFUND',
+    entityType: 'Booking',
+    entityId: bookingId,
+    newValue: { walletId: wallet.id, amount },
+  });
+}
+
+async function refundBooking(prisma, userId, bookingId, amount) {
+  await prisma.$transaction((tx) => refundBookingTx(tx, userId, bookingId, amount));
+}
+
+async function applyUserTipTx(tx, userId, bookingId, tipAmount) {
+  const amount = Number(tipAmount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const wallet = await tx.wallet.findUnique({ where: { userId } });
+  if (!wallet || wallet.balance < amount) {
+    const err = new Error('Insufficient wallet balance for tip');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const updatedWallet = await tx.wallet.update({
+    where: { id: wallet.id },
+    data: { balance: { decrement: amount } },
+  });
+  if (updatedWallet.balance < 0) {
+    const err = new Error('Insufficient wallet balance for tip');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await tx.walletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      type: 'PAYMENT',
+      amount: -amount,
+      description: 'Tip for driver',
+      referenceId: bookingId,
+    },
+  });
+
+  return updatedWallet;
 }
 
 // ── Credit Stripe top-up ────────────────────────────────────
@@ -201,8 +237,10 @@ async function payBookingFromWallet(tx, userId, booking) {
 
 module.exports = {
   reserveBookingPayment,
+  refundBookingTx,
   refundBooking,
   creditStripeTopUp,
   applyReferralBonus,
   payBookingFromWallet,
+  applyUserTipTx,
 };

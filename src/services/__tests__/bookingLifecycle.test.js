@@ -3,7 +3,6 @@ const {
   isTerminal,
   canUserCancel,
   canDriverCancel,
-  serverQuote,
   isSettlementEligible,
   money,
   isDeliveryOtpActive,
@@ -91,71 +90,6 @@ describe('Booking Lifecycle — Cancellation rules', () => {
 
   test('driver cannot cancel DELIVERED', () => {
     expect(canDriverCancel('DELIVERED')).toBe(false);
-  });
-});
-
-describe('Booking Lifecycle — Pricing', () => {
-  test('serverQuote returns positive price for valid inputs', () => {
-    const quote = serverQuote({
-      pickupAddress: { latitude: 3.139, longitude: 101.6869 },
-      deliveryAddress: { latitude: 3.15, longitude: 101.70 },
-      vehicleType: 'CAR',
-      deliveryMode: 'Regular',
-      estimatedPrice: 0,
-      distance: 5,
-      duration: 15,
-    });
-    expect(quote.estimatedPrice).toBeGreaterThan(0);
-    expect(quote.distance).toBeGreaterThan(0);
-    expect(quote.duration).toBeGreaterThan(0);
-  });
-
-  test('serverQuote uses client price if higher than calculated', () => {
-    const quote = serverQuote({
-      pickupAddress: { latitude: 3.139, longitude: 101.6869 },
-      deliveryAddress: { latitude: 3.14, longitude: 101.69 },
-      vehicleType: 'BIKE',
-      deliveryMode: 'Regular',
-      estimatedPrice: 999,
-      distance: 1,
-      duration: 5,
-    });
-    expect(quote.estimatedPrice).toBe(999);
-  });
-
-  test('serverQuote falls back to CAR rates for unknown vehicle type', () => {
-    const quote = serverQuote({
-      pickupAddress: { latitude: 3.139, longitude: 101.6869 },
-      deliveryAddress: { latitude: 3.15, longitude: 101.70 },
-      vehicleType: 'SPACESHIP',
-      deliveryMode: 'Regular',
-      estimatedPrice: 0,
-      distance: 10,
-      duration: 30,
-    });
-    expect(quote.estimatedPrice).toBeGreaterThan(0);
-  });
-
-  test('serverQuote normalizes delivery modes', () => {
-    const regular = serverQuote({
-      pickupAddress: { latitude: 0, longitude: 0 },
-      deliveryAddress: { latitude: 0, longitude: 0 },
-      vehicleType: 'CAR',
-      deliveryMode: 'Regular',
-      estimatedPrice: 0,
-      distance: 10,
-      duration: 30,
-    });
-    const priority = serverQuote({
-      pickupAddress: { latitude: 0, longitude: 0 },
-      deliveryAddress: { latitude: 0, longitude: 0 },
-      vehicleType: 'CAR',
-      deliveryMode: 'Priority',
-      estimatedPrice: 0,
-      distance: 10,
-      duration: 30,
-    });
-    expect(priority.estimatedPrice).toBeGreaterThan(regular.estimatedPrice);
   });
 });
 

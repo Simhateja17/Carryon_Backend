@@ -2,14 +2,9 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const { maskEmail } = require('../lib/maskEmail');
 
 const router = Router();
-const maskEmail = (email = '') => {
-  const [local = '', domain = ''] = String(email).split('@');
-  if (!local || !domain) return email;
-  const visible = local.slice(0, 2);
-  return `${visible}${'*'.repeat(Math.max(local.length - 2, 1))}@${domain}`;
-};
 
 // POST /api/driver/auth/sync — Create or find Driver by email from Supabase JWT
 router.post('/sync', authenticateDriver, async (req, res, next) => {

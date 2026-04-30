@@ -69,7 +69,10 @@ async function attachLiveTracking(server) {
     }
 
     socket.on('close', () => {
-      if (joinedRoom) joinedRoom.delete(socket);
+      if (joinedRoom) {
+        joinedRoom.delete(socket);
+        if (joinedRoom.size === 0) rooms.delete(bookingId);
+      }
     });
   });
 

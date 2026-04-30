@@ -3,7 +3,11 @@ const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
 const { driverEarningFromGross } = require('../lib/money');
 const { notifyUserBookingEvent } = require('../lib/pushNotifications');
-const { OFFER_EXPIRY_MS } = require('./businessConfig');
+const {
+  OFFER_EXPIRY_MS,
+  OTP_MAX_VERIFY_ATTEMPTS,
+  OTP_VERIFY_LOCK_MS,
+} = require('./businessConfig');
 const { recordAudit } = require('./auditLog');
 const {
   isSettlementEligible,
@@ -28,6 +32,7 @@ const COMMANDS = {
   COMPLETE_DELIVERY: 'COMPLETE_DELIVERY',
   CANCEL_BEFORE_PICKUP: 'CANCEL_BEFORE_PICKUP',
 };
+const otpAttempts = new Map();
 
 const bookingInclude = {
   pickupAddress: true,
@@ -39,6 +44,36 @@ function lifecycleError(message, statusCode = 400, failureCode = 'INVALID_LIFECY
   const err = new AppError(message, statusCode);
   err.failureCode = failureCode;
   return err;
+}
+
+function otpAttemptKey(bookingId, actorId, command) {
+  return `${bookingId}:${actorId}:${command}`;
+}
+
+function assertOtpNotLocked(bookingId, actorId, command, now = new Date()) {
+  const key = otpAttemptKey(bookingId, actorId, command);
+  const attempt = otpAttempts.get(key);
+  if (!attempt) return;
+  if (attempt.lockedUntil && attempt.lockedUntil > now) {
+    throw lifecycleError('Too many invalid OTP attempts. Please try again later.', 429, 'OTP_ATTEMPTS_EXCEEDED');
+  }
+  if (attempt.lockedUntil && attempt.lockedUntil <= now) {
+    otpAttempts.delete(key);
+  }
+}
+
+function recordOtpFailure(bookingId, actorId, command, now = new Date()) {
+  const key = otpAttemptKey(bookingId, actorId, command);
+  const current = otpAttempts.get(key) || { count: 0, lockedUntil: null };
+  const count = current.count + 1;
+  const lockedUntil = count >= OTP_MAX_VERIFY_ATTEMPTS
+    ? new Date(now.getTime() + OTP_VERIFY_LOCK_MS)
+    : null;
+  otpAttempts.set(key, { count, lockedUntil });
+}
+
+function resetOtpFailures(bookingId, actorId, command) {
+  otpAttempts.delete(otpAttemptKey(bookingId, actorId, command));
 }
 
 function toDriverStatus(bookingStatus) {
@@ -411,12 +446,15 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
   }
 
   const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
+  assertOtpNotLocked(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
   const otpResult = actor.actorType === 'USER'
     ? await verifyUserDeliveryOtp({ booking, otp, recipientEmail })
     : await verifyDeliveryOtp({ booking, otp, recipientEmail });
   if (!otpResult.valid) {
+    recordOtpFailure(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
     throw lifecycleError(otpResult.error, 400, 'RECIPIENT_OTP_INVALID');
   }
+  resetOtpFailures(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
 
   const now = new Date();
   const updated = await prisma.$transaction(async (tx) => {
@@ -574,9 +612,12 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
         assertStatus(booking, 'DRIVER_ARRIVED', normalizedCommand);
         const otp = payload.otp || payload.pickupOtp;
         if (!otp) throw lifecycleError('OTP is required', 400, 'PICKUP_OTP_REQUIRED');
+        assertOtpNotLocked(booking.id, actor.actorId, normalizedCommand);
         if (booking.otp !== String(otp).trim()) {
+          recordOtpFailure(booking.id, actor.actorId, normalizedCommand);
           throw lifecycleError('Invalid OTP', 400, 'PICKUP_OTP_INVALID');
         }
+        resetOtpFailures(booking.id, actor.actorId, normalizedCommand);
         const updated = await prisma.$transaction(async (tx) => {
           const changed = await tx.booking.update({
             where: { id: booking.id },

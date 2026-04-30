@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
+const { parsePagination } = require('../lib/pagination');
+const { onlineHoursForWindow } = require('../services/driverOnlineTime');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -32,6 +34,7 @@ router.get('/summary', async (req, res, next) => {
 
     const bonusEarnings = bonuses.reduce((s, t) => s + t.amount, 0);
     const tipEarnings = tips.reduce((s, t) => s + t.amount, 0);
+    const onlineHours = await onlineHoursForWindow(req.driver.id, startOfToday, now);
 
     res.json({
       success: true,
@@ -43,7 +46,7 @@ router.get('/summary', async (req, res, next) => {
         todayDeliveries,
         bonusEarnings,
         tipEarnings,
-        onlineHours: 0, // TODO: track online hours
+        onlineHours,
       },
     });
   } catch (err) {
@@ -54,8 +57,7 @@ router.get('/summary', async (req, res, next) => {
 // GET /api/driver/earnings/transactions
 router.get('/transactions', async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const { limit, skip } = parsePagination(req.query);
 
     const wallet = await prisma.driverWallet.findUnique({
       where: { driverId: req.driver.id },
@@ -69,7 +71,7 @@ router.get('/transactions', async (req, res, next) => {
       where: { walletId: wallet.id },
       orderBy: { createdAt: 'desc' },
       skip,
-      take: parseInt(limit),
+      take: limit,
     });
 
     res.json({ success: true, data: transactions });

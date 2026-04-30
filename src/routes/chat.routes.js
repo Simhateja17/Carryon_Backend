@@ -67,6 +67,12 @@ router.post('/:bookingId', async (req, res, next) => {
 // GET /api/chat/:bookingId/unread - Get unread count
 router.get('/:bookingId/unread', async (req, res, next) => {
   try {
+    const booking = await prisma.booking.findFirst({
+      where: { id: req.params.bookingId, userId: req.user.userId },
+      select: { id: true },
+    });
+    if (!booking) return next(new AppError('Booking not found', 404));
+
     const count = await prisma.chatMessage.count({
       where: {
         bookingId: req.params.bookingId,

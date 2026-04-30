@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
+const { parsePagination } = require('../lib/pagination');
 const { sendPushToDriverIds } = require('../lib/pushNotifications');
 const { generateNextOrderCode, isOrderCodeConflict } = require('../services/bookingLifecycle');
 const { generatePickupOtp } = require('../services/deliveryOtp');
@@ -11,6 +12,7 @@ const { recordAudit } = require('../services/auditLog');
 
 const router = Router();
 const FALLBACK_TEST_USER_EMAIL = 'admin.test.rider@carryon.local';
+const MAX_TARGETED_DRIVER_IDS = 100;
 
 function sanitizeAddress(input) {
   return {
@@ -27,13 +29,12 @@ function sanitizeAddress(input) {
 // GET /api/admin/notifications
 router.get('/', async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { page, limit, skip } = parsePagination(req.query);
 
     const [notifications, total] = await Promise.all([
       prisma.driverNotification.findMany({
         orderBy: { createdAt: 'desc' },
-        take: Number(limit),
+        take: limit,
         skip,
         include: {
           driver: { select: { id: true, name: true, email: true } },
@@ -42,7 +43,7 @@ router.get('/', async (req, res, next) => {
       prisma.driverNotification.count(),
     ]);
 
-    res.json({ success: true, data: notifications, total, page: Number(page), limit: Number(limit) });
+    res.json({ success: true, data: notifications, total, page, limit });
   } catch (err) {
     next(err);
   }
@@ -89,6 +90,9 @@ router.post('/ride-request', async (req, res, next) => {
     }
     if (!Array.isArray(driverIds)) {
       return next(new AppError('driverIds must be an array', 400));
+    }
+    if (driverIds.length > MAX_TARGETED_DRIVER_IDS) {
+      return next(new AppError(`driverIds cannot contain more than ${MAX_TARGETED_DRIVER_IDS} entries`, 400));
     }
 
     const testUserEmail = process.env.ADMIN_TEST_USER_EMAIL || FALLBACK_TEST_USER_EMAIL;
@@ -378,7 +382,7 @@ router.get('/stats', async (req, res, next) => {
 // GET /api/admin/notifications/recipient-otps
 router.get('/recipient-otps', async (req, res, next) => {
   try {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const { limit } = parsePagination(req.query, { defaultLimit: 50 });
     const status = String(req.query.status || 'all').toLowerCase();
     const where = {
       dispatchSource: 'ADMIN',

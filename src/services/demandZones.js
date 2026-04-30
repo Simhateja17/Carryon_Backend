@@ -1,22 +1,11 @@
 const prisma = require('../lib/prisma');
+const { haversineKm: distanceKm } = require('../lib/distance');
 
 const ACTIVE_DEMAND_STATUSES = ['SEARCHING_DRIVER', 'PENDING'];
 const DEFAULT_RADIUS_KM = 10;
 const MAX_RADIUS_KM = 50;
-const EARTH_RADIUS_KM = 6371;
-
-function toRad(value) {
-  return value * Math.PI / 180;
-}
-
 function haversineKm(a, b) {
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(h));
+  return distanceKm(a.lat, a.lng, b.lat, b.lng);
 }
 
 function normalizeRadiusKm(radiusKm) {

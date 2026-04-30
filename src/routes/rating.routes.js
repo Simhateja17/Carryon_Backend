@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
+const { applyUserTipTx } = require('../services/walletLedger');
 
 const router = Router();
 router.use(authenticate);
@@ -65,25 +66,7 @@ router.post('/:bookingId', async (req, res, next) => {
 
       // If tip, credit to driver wallet (future: driver wallet)
       if (tipAmount && tipAmount > 0) {
-        // Deduct from user wallet if they have balance
-        const wallet = await prisma.wallet.findUnique({ where: { userId: req.user.userId } });
-        if (wallet && wallet.balance >= tipAmount) {
-          await prisma.$transaction([
-            prisma.wallet.update({
-              where: { id: wallet.id },
-              data: { balance: { decrement: tipAmount } },
-            }),
-            prisma.walletTransaction.create({
-              data: {
-                walletId: wallet.id,
-                type: 'PAYMENT',
-                amount: -tipAmount,
-                description: 'Tip for driver',
-                referenceId: req.params.bookingId,
-              },
-            }),
-          ]);
-        }
+        await prisma.$transaction((tx) => applyUserTipTx(tx, req.user.userId, req.params.bookingId, tipAmount));
       }
     }
 

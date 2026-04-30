@@ -3,7 +3,7 @@
 
 const prisma = require('../lib/prisma');
 const locationProvider = require('./locationProvider');
-const { VEHICLE_RATE_PER_KM } = require('./businessConfig');
+const { VEHICLE_RATE_PER_KM, OFFLOADING_FEE, BOOKING_TAX_RATE } = require('./businessConfig');
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -76,28 +76,22 @@ async function resolveRoute(routeProvider, coords) {
       coords.deliveryLat,
       coords.deliveryLng
     );
-    if (route && Number(route.distance) > 0) {
+    if (route && Number(route.distance) > 0 && route.isEstimated !== true) {
       return {
         distance: money(route.distance),
         duration: Math.max(0, Number(route.duration) || 0),
-        isEstimated: !!route.isEstimated,
+        isEstimated: false,
       };
     }
   } catch (err) {
-    console.warn('[pricing] route provider failed, using fallback:', err.message);
+    const routeError = new Error(`Unable to calculate route for pricing: ${err.message}`);
+    routeError.statusCode = 503;
+    throw routeError;
   }
 
-  const fallback = routeProvider.fallbackRouteDistance(
-    coords.pickupLat,
-    coords.pickupLng,
-    coords.deliveryLat,
-    coords.deliveryLng
-  );
-  return {
-    distance: money(fallback.distance),
-    duration: Math.max(0, Number(fallback.duration) || 0),
-    isEstimated: true,
-  };
+  const routeError = new Error('Unable to calculate route for pricing');
+  routeError.statusCode = 503;
+  throw routeError;
 }
 
 async function quoteBookingFare({
@@ -105,6 +99,7 @@ async function quoteBookingFare({
   deliveryAddress,
   vehicleType,
   deliveryMode,
+  offloading = false,
   db = prisma,
   routeProvider = locationProvider,
 }) {
@@ -115,11 +110,14 @@ async function quoteBookingFare({
   ]);
   const baseFare = money(pricing.basePrice);
   const distanceFare = money(route.distance * pricing.pricePerKm);
-  const subtotal = money(baseFare + distanceFare);
+  const offloadingFee = offloading ? money(OFFLOADING_FEE) : 0;
+  const subtotal = money(baseFare + distanceFare + offloadingFee);
+  const tax = money(subtotal * BOOKING_TAX_RATE);
+  const total = money(subtotal + tax);
 
   return {
-    estimatedPrice: subtotal,
-    price: subtotal,
+    estimatedPrice: total,
+    price: total,
     distance: route.distance,
     duration: route.duration,
     isEstimated: route.isEstimated,
@@ -130,8 +128,9 @@ async function quoteBookingFare({
       distance: route.distance,
       pricePerKm: pricing.pricePerKm,
       distanceFare,
-      tax: 0,
-      total: subtotal,
+      offloadingFee,
+      tax,
+      total,
     },
   };
 }

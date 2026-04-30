@@ -9,10 +9,13 @@ router.post('/', async (req, res) => {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   let event = req.body;
 
+  if (!webhookSecret) {
+    console.error('[stripe-webhook] STRIPE_WEBHOOK_SECRET is not configured; refusing webhook processing');
+    return res.status(500).json({ received: false });
+  }
+
   try {
-    if (webhookSecret) {
-      event = getStripe().webhooks.constructEvent(req.body, signature, webhookSecret);
-    }
+    event = getStripe().webhooks.constructEvent(req.body, signature, webhookSecret);
   } catch (err) {
     console.warn('[stripe-webhook] signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);

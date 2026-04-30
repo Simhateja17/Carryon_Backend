@@ -1,8 +1,8 @@
 const { Router } = require('express');
 const multer = require('multer');
-const { createClient } = require('@supabase/supabase-js');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
+const { uploadToSupabase } = require('../lib/supabase');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -19,17 +19,6 @@ const upload = multer({
   },
 });
 
-let _supabase;
-function getSupabase() {
-  if (!_supabase) {
-    _supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_KEY
-    );
-  }
-  return _supabase;
-}
-
 // POST /api/driver/upload/package-image
 router.post('/package-image', upload.single('image'), async (req, res, next) => {
   try {
@@ -41,26 +30,18 @@ router.post('/package-image', upload.single('image'), async (req, res, next) => 
     const ext = req.file.originalname.split('.').pop() || 'jpg';
     const fileName = `driver-proofs/${req.driver.id}/${Date.now()}.${ext}`;
 
-    const { error } = await getSupabase().storage
-      .from('package-images')
-      .upload(fileName, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: false,
-      });
-
-    if (error) {
+    let publicUrl;
+    try {
+      publicUrl = await uploadToSupabase('package-images', req.file, fileName);
+    } catch (error) {
       console.error('[driver-upload] Supabase upload error:', error);
       return next(new AppError('Failed to upload image', 500));
     }
 
-    const { data: urlData } = getSupabase().storage
-      .from('package-images')
-      .getPublicUrl(fileName);
-
-    console.log('[driver-upload] package-image uploaded — driverId:', req.driver.id, 'url:', urlData.publicUrl);
+    console.log('[driver-upload] package-image uploaded — driverId:', req.driver.id, 'url:', publicUrl);
     res.json({
       success: true,
-      data: { url: urlData.publicUrl },
+      data: { url: publicUrl },
     });
   } catch (err) {
     next(err);

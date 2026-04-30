@@ -312,6 +312,21 @@ model Driver {
   bookingRejections  BookingRejection[]
   pushDevices        PushDevice[]
   payouts            DriverPayout[]
+  onlineSessions     DriverOnlineSession[]
+}
+
+model DriverOnlineSession {
+  id        String    @id @default(uuid())
+  driverId  String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@index([driverId, startedAt])
+  @@index([driverId, endedAt])
 }
 
 model PushDevice {

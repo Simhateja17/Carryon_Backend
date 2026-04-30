@@ -70,8 +70,8 @@ router.get('/map-config', authenticateToken, async (req, res) => {
   console.log(`[location] GET /map-config`);
   res.json({
     success: true,
-    data: {
-      apiKey: location.GOOGLE_MAPS_API_KEY,
+      data: {
+      apiKey: process.env.GOOGLE_MAPS_BROWSER_API_KEY || '',
       styleUrl: '',
       region: '',
     },

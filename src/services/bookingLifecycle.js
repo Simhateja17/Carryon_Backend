@@ -2,38 +2,12 @@
 // Owns Booking state transitions, pricing, settlement, and
 // cancellation. Routes are thin HTTP adapters that call here.
 
-const { haversineKm } = require('../lib/distance');
-const { driverEarningFromGross } = require('../lib/money');
+const { driverEarningFromGross, money } = require('../lib/money');
 const { notifyUserBookingEvent } = require('../lib/pushNotifications');
-const { VEHICLE_RATE_PER_KM, DELIVERY_OTP_TTL_MS } = require('./businessConfig');
+const { numericOtp } = require('../lib/otp');
+const { DELIVERY_OTP_TTL_MS } = require('./businessConfig');
 
 // ── Helpers ─────────────────────────────────────────────────
-
-function money(value) {
-  return Math.round(Number(value || 0) * 100) / 100;
-}
-
-function positiveNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function coordinate(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function estimateMinutes(distanceKm) {
-  if (!distanceKm || distanceKm <= 0) return 0;
-  return Math.max(5, Math.ceil((distanceKm / 30) * 60));
-}
-
-function normalizedDeliveryMode(deliveryMode) {
-  const mode = String(deliveryMode || 'Regular').trim().toLowerCase();
-  if (mode === 'priority') return 'priority';
-  if (mode === 'pooling') return 'pooling';
-  return 'regular';
-}
 
 // ── Status Transition State Machine ─────────────────────────
 
@@ -68,29 +42,6 @@ function canUserCancel(status) {
 
 function canDriverCancel(status) {
   return !NON_CANCELLABLE_BY_DRIVER.includes(status);
-}
-
-// ── Pricing ─────────────────────────────────────────────────
-
-function serverQuote({ pickupAddress, deliveryAddress, vehicleType, deliveryMode, estimatedPrice, distance, duration }) {
-  const pickupLat = coordinate(pickupAddress?.latitude);
-  const pickupLng = coordinate(pickupAddress?.longitude);
-  const deliveryLat = coordinate(deliveryAddress?.latitude);
-  const deliveryLng = coordinate(deliveryAddress?.longitude);
-  const directDistance = pickupLat != null && pickupLng != null && deliveryLat != null && deliveryLng != null
-    ? haversineKm(pickupLat, pickupLng, deliveryLat, deliveryLng)
-    : 0;
-  const resolvedDistance = money(Math.max(positiveNumber(distance), directDistance));
-  const rates = VEHICLE_RATE_PER_KM[vehicleType] || VEHICLE_RATE_PER_KM.CAR;
-  const rate = rates[normalizedDeliveryMode(deliveryMode)] || rates.regular;
-  const calculatedPrice = money(resolvedDistance * rate);
-  const clientPrice = money(positiveNumber(estimatedPrice));
-
-  return {
-    estimatedPrice: Math.max(clientPrice, calculatedPrice),
-    distance: resolvedDistance,
-    duration: positiveNumber(duration) || estimateMinutes(resolvedDistance),
-  };
 }
 
 // ── Order Code Generation ───────────────────────────────────
@@ -204,7 +155,7 @@ async function creditDriverEarning(tx, driverId, booking) {
 // ── OTP Helpers (pickup) ────────────────────────────────────
 
 function generatePickupOtp() {
-  return Math.floor(1000 + Math.random() * 9000).toString();
+  return numericOtp(4);
 }
 
 // ── Delivery OTP Active Check ───────────────────────────────
@@ -221,9 +172,6 @@ module.exports = {
   canUserCancel,
   canDriverCancel,
 
-  // Pricing
-  serverQuote,
-
   // Order codes
   generateNextOrderCode,
   isOrderCodeConflict,
@@ -235,7 +183,6 @@ module.exports = {
 
   // Helpers
   money,
-  positiveNumber,
   generatePickupOtp,
   isDeliveryOtpActive,
 };
