@@ -5,6 +5,7 @@ const app = require('./src/app');
 const { attachLiveTracking } = require('./src/services/liveTracking');
 const { startWebhookRetryLoop } = require('./src/services/webhookInbox');
 const { startDriverPayoutReconciliationLoop } = require('./src/services/driverPayoutReconciliation');
+const { validateSupabaseConnection } = require('./src/lib/supabase');
 
 const DISCOVERY_PORT = 4999;
 
@@ -34,7 +35,20 @@ function startDiscoveryServer(actualPort) {
 
 const preferredPort = process.env.PORT || 3000;
 
-findAvailablePort(Number(preferredPort)).then(PORT => {
+async function start() {
+  // Validate Supabase connectivity before accepting requests.
+  // A failure here means SUPABASE_SERVICE_KEY is misconfigured on this server.
+  try {
+    await validateSupabaseConnection();
+    console.log('[supabase] Storage connection validated');
+  } catch (err) {
+    console.error('[supabase] STARTUP VALIDATION FAILED:', err.message);
+    console.error('[supabase] Ensure SUPABASE_SERVICE_KEY is set to the service_role key on this server.');
+    // Do not exit — the rest of the API can still work; only storage uploads will fail.
+    // Change to process.exit(1) if you want a hard stop.
+  }
+
+  const PORT = await findAvailablePort(Number(preferredPort));
   const server = http.createServer(app);
   attachLiveTracking(server);
   server.listen(PORT, '0.0.0.0', () => {
@@ -43,4 +57,6 @@ findAvailablePort(Number(preferredPort)).then(PORT => {
     startWebhookRetryLoop();
     startDriverPayoutReconciliationLoop();
   });
-});
+}
+
+start();

@@ -25,7 +25,9 @@ const corsOptions = allowedOrigins.length > 0
   : (process.env.NODE_ENV === 'production' ? { origin: false } : undefined);
 app.use(cors(corsOptions));
 app.use(helmet());
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {
+  skip: (req, res) => process.env.NODE_ENV === 'production' && res.statusCode === 404,
+}));
 app.use('/api/v1/stripe/webhook', express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
 app.use('/api/stripe/webhook', legacyApiHeaders, express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
 app.use(express.json({ limit: '100kb' }));
