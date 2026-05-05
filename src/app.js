@@ -72,6 +72,46 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Storage diagnostic — call on prod to verify Supabase storage config
+app.get('/health/storage', async (req, res) => {
+  const { getSupabaseAdmin } = require('./lib/supabase');
+  const keyConfigured = !!process.env.SUPABASE_SERVICE_KEY;
+  const keyPrefix = keyConfigured
+    ? process.env.SUPABASE_SERVICE_KEY.substring(0, 12) + '...'
+    : 'NOT SET';
+
+  try {
+    const { data: buckets, error } = await getSupabaseAdmin().storage.listBuckets();
+    if (error) {
+      console.error('[health/storage] listBuckets failed:', error.message);
+      return res.status(503).json({
+        status: 'error',
+        storage: 'unreachable',
+        keyConfigured,
+        keyPrefix,
+        error: error.message,
+        hint: !keyConfigured
+          ? 'SUPABASE_SERVICE_KEY is not set in this environment'
+          : 'Key is set but Supabase rejected it — ensure it is the service_role key, not the anon key',
+      });
+    }
+    const bucketNames = (buckets || []).map(b => b.name);
+    const hasPackageImages = bucketNames.includes('package-images');
+    res.json({
+      status: hasPackageImages ? 'ok' : 'degraded',
+      storage: 'reachable',
+      keyConfigured,
+      keyPrefix,
+      buckets: bucketNames,
+      packageImagesBucketExists: hasPackageImages,
+      hint: hasPackageImages ? null : 'package-images bucket missing — run: node scripts/setup-storage-buckets.js',
+    });
+  } catch (err) {
+    console.error('[health/storage] unexpected error:', err.message);
+    res.status(500).json({ status: 'error', error: err.message, keyConfigured, keyPrefix });
+  }
+});
+
 // Routes
 console.log('[app] Mounting routes...');
 mountVersionedRoute(app, '/auth', require('./routes/auth.routes'));

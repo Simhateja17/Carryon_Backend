@@ -40,24 +40,58 @@ function parseUploadMiddleware(req, res, next) {
 
 // POST /api/driver/upload/package-image
 router.post('/package-image', parseUploadMiddleware, async (req, res, next) => {
+  const t0 = Date.now();
   try {
-    console.log('[driver-upload] POST package-image — driverId:', req.driver.id, 'fileSize:', req.file?.size);
+    const driverId = req.driver.id;
+    const fileSize = req.file?.size;
+    const mimetype = req.file?.mimetype;
+    const originalname = req.file?.originalname;
+
+    console.log('[driver-upload] POST package-image', JSON.stringify({
+      driverId,
+      fileSize,
+      mimetype,
+      originalname,
+    }));
+
     if (!req.file) {
       return next(new AppError('No image file provided', 400));
     }
 
-    const ext = req.file.originalname.split('.').pop() || 'jpg';
-    const fileName = `driver-proofs/${req.driver.id}/${Date.now()}.${ext}`;
+    const ext = (originalname || '').split('.').pop()?.toLowerCase() || 'jpg';
+    const fileName = `driver-proofs/${driverId}/${Date.now()}.${ext}`;
+
+    console.log('[driver-upload] uploading to bucket=package-images path=' + fileName);
 
     let publicUrl;
     try {
       publicUrl = await uploadToSupabase('package-images', req.file, fileName);
     } catch (error) {
-      console.error('[driver-upload] Supabase upload error:', error);
+      const ms = Date.now() - t0;
+      console.error('[driver-upload] UPLOAD FAILED', JSON.stringify({
+        driverId,
+        fileName,
+        durationMs: ms,
+        errorMessage: error.message,
+        statusCode: error.statusCode || error.status || null,
+        errorCode: error.error || null,
+        isRLS: error.message?.includes('row-level security') || error.statusCode === 403,
+        supabaseUrl: process.env.SUPABASE_URL,
+        keyConfigured: !!process.env.SUPABASE_SERVICE_KEY,
+        keyPrefix: process.env.SUPABASE_SERVICE_KEY
+          ? process.env.SUPABASE_SERVICE_KEY.substring(0, 12) + '...'
+          : 'NOT SET',
+      }));
       return next(new AppError(`Failed to upload image: ${error.message || 'unknown storage error'}`, 500));
     }
 
-    console.log('[driver-upload] package-image uploaded — driverId:', req.driver.id, 'url:', publicUrl);
+    console.log('[driver-upload] UPLOAD OK', JSON.stringify({
+      driverId,
+      fileName,
+      durationMs: Date.now() - t0,
+      url: publicUrl,
+    }));
+
     res.json({
       success: true,
       data: { url: publicUrl },
