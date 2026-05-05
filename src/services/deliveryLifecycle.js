@@ -562,8 +562,16 @@ async function cancelBeforePickup({ booking, actor, locationEvidence }) {
       distanceToExpectedMeters: locationEvidence?.distanceToExpectedMeters ?? null,
       metadata: {},
     });
+    if (actor.actorType === 'DRIVER') {
+      await tx.bookingRejection.upsert({
+        where: { driverId_bookingId: { driverId: actor.actorId, bookingId: booking.id } },
+        create: { driverId: actor.actorId, bookingId: booking.id },
+        update: {},
+      });
+    }
     return changed;
   });
+  await notifyUserBookingEvent(updated, 'SEARCHING_DRIVER');
   return resultPayload({ booking: updated, message: 'Job cancelled before pickup', locationEvidence });
 }
 

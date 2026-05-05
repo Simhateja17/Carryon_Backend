@@ -19,6 +19,12 @@ jest.mock('../../lib/prisma', () => ({
   auditLog: {
     create: jest.fn(),
   },
+  deliveryLifecycleEvent: {
+    create: jest.fn(),
+  },
+  bookingRejection: {
+    upsert: jest.fn(),
+  },
 }));
 
 jest.mock('../../middleware/auth', () => ({
@@ -612,5 +618,105 @@ describe('Driver job route side effects', () => {
         entityId: 'booking-1',
       }),
     });
+  });
+
+  test('driver cancel before pickup requeues job and hides it from the same driver', async () => {
+    const assignedBooking = {
+      id: 'booking-1',
+      driverId: 'driver-1',
+      status: 'DRIVER_ARRIVED',
+      finalPrice: 25,
+      estimatedPrice: 25,
+      distance: 10,
+      duration: 30,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      pickupAddress: {
+        address: 'Pickup',
+        label: 'Pickup',
+        latitude: 3.1,
+        longitude: 101.6,
+      },
+      deliveryAddress: {
+        address: 'Drop',
+        label: 'Drop',
+        latitude: 3.2,
+        longitude: 101.7,
+        contactName: 'Receiver',
+      },
+      user: {
+        name: 'Customer',
+        email: 'customer@example.com',
+        phone: '123',
+      },
+    };
+    const requeuedBooking = {
+      ...assignedBooking,
+      driverId: null,
+      status: 'SEARCHING_DRIVER',
+    };
+    const tx = {
+      booking: {
+        update: jest.fn().mockResolvedValue(requeuedBooking),
+      },
+      bookingRejection: {
+        upsert: jest.fn().mockResolvedValue({ id: 'rejection-1' }),
+      },
+      auditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
+      deliveryLifecycleEvent: {
+        create: jest.fn().mockResolvedValue({ id: 'event-1' }),
+      },
+    };
+    prisma.booking.findUnique.mockResolvedValue(assignedBooking);
+    prisma.$transaction.mockImplementation((callback) => callback(tx));
+
+    const response = await invokeRoute(require('../driver-jobs.routes'), 'POST', '/:id/lifecycle-command', {
+      params: { id: 'booking-1' },
+      body: { command: 'CANCEL_BEFORE_PICKUP' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.job.status).toBe('PENDING');
+    expect(tx.booking.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: 'SEARCHING_DRIVER', driverId: null },
+    }));
+    expect(tx.bookingRejection.upsert).toHaveBeenCalledWith({
+      where: { driverId_bookingId: { driverId: 'driver-1', bookingId: 'booking-1' } },
+      create: { driverId: 'driver-1', bookingId: 'booking-1' },
+      update: {},
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'BOOKING_DRIVER_CANCELLED',
+        entityId: 'booking-1',
+      }),
+    });
+  });
+
+  test('driver cancel after pickup fails without requeueing', async () => {
+    prisma.booking.findUnique.mockResolvedValue({
+      id: 'booking-1',
+      driverId: 'driver-1',
+      status: 'PICKUP_DONE',
+      pickupAddress: {
+        latitude: 3.1,
+        longitude: 101.6,
+      },
+      deliveryAddress: {
+        latitude: 3.2,
+        longitude: 101.7,
+      },
+    });
+
+    const response = await invokeRoute(require('../driver-jobs.routes'), 'POST', '/:id/lifecycle-command', {
+      params: { id: 'booking-1' },
+      body: { command: 'CANCEL_BEFORE_PICKUP' },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe('Cannot cancel after picking up the package');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.bookingRejection.upsert).not.toHaveBeenCalled();
   });
 });
