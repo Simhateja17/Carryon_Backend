@@ -2,6 +2,8 @@ module.exports = {
   apps: [{
     name: 'carryon-backend',
     script: 'server.js',
+    cwd: '/home/ubuntu/carryon-backend',
+    exec_mode: 'fork',
     instances: 1,
     autorestart: true,
     watch: false,
