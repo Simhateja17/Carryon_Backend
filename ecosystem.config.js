@@ -6,8 +6,10 @@ module.exports = {
     autorestart: true,
     watch: false,
     max_memory_restart: '512M',
+    node_args: '--require dotenv/config',
     env: {
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      DOTENV_CONFIG_PATH: '/home/ubuntu/carryon-backend/.env',
     },
     error_file: '/home/ubuntu/logs/carryon-error.log',
     out_file: '/home/ubuntu/logs/carryon-out.log',
