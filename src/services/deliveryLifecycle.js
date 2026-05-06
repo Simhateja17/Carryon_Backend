@@ -526,6 +526,35 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
   });
 
   await notifyUserBookingEvent(updated, 'DELIVERED');
+
+  // Auto-generate invoice for completed delivery (non-fatal)
+  try {
+    const existingInvoice = await prisma.invoice.findUnique({ where: { bookingId: updated.id } });
+    if (!existingInvoice) {
+      const price = updated.finalPrice || updated.estimatedPrice || 0;
+      const taxRate = 0.05;
+      const subtotal = Math.round((price / (1 + taxRate)) * 100) / 100;
+      const tax = Math.round((price - subtotal) * 100) / 100;
+      const now2 = new Date();
+      const invoiceNumber = `CO-${now2.getFullYear()}${String(now2.getMonth() + 1).padStart(2, '0')}${String(now2.getDate()).padStart(2, '0')}-${Math.floor(Math.random() * 9000 + 1000)}`;
+      await prisma.invoice.create({
+        data: {
+          bookingId: updated.id,
+          userId: updated.userId,
+          invoiceNumber,
+          subtotal,
+          tax,
+          discount: updated.discountAmount || 0,
+          total: price,
+          taxRate,
+          currency: 'MYR',
+        },
+      });
+    }
+  } catch (invoiceErr) {
+    console.error('[invoice] Auto-generation failed for booking', updated.id, invoiceErr.message);
+  }
+
   return resultPayload({ booking: updated, message: 'Delivery completed', locationEvidence });
 }
 
