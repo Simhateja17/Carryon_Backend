@@ -8,6 +8,7 @@ const {
   upsertPushDevice,
   removePushDevice,
 } = require('../lib/pushDevices');
+const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -28,7 +29,11 @@ router.get('/', async (req, res, next) => {
 // PUT /api/driver/profile
 router.put('/', async (req, res, next) => {
   try {
-    const { name, phone, photo, emergencyContact, driversLicenseNumber, dateOfBirth } = req.body;
+    const { name, phone, photo, emergencyContact, driversLicenseNumber, dateOfBirth, language, preferredLanguage } = req.body;
+    const requestedLanguage = language ?? preferredLanguage;
+    if (requestedLanguage !== undefined && !isSupportedLanguageCode(requestedLanguage)) {
+      return next(new AppError('Unsupported language', 400));
+    }
     const driver = await prisma.driver.update({
       where: { id: req.driver.id },
       data: {
@@ -38,6 +43,7 @@ router.put('/', async (req, res, next) => {
         ...(emergencyContact && { emergencyContact }),
         ...(driversLicenseNumber && { driversLicenseNumber }),
         ...(dateOfBirth && { dateOfBirth }),
+        ...(requestedLanguage !== undefined && { language: normalizeLanguageCode(requestedLanguage) }),
       },
       include: { documents: true, vehicle: true },
     });

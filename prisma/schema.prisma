@@ -296,6 +296,7 @@ model Driver {
   isVerified         Boolean                  @default(false)
   verificationStatus DriverVerificationStatus @default(PENDING)
   emergencyContact   String                   @default("")
+  language           String                   @default("")
   fcmToken           String?
   stripeConnectAccountId String?                  @unique
   stripeDetailsSubmitted Boolean                  @default(false)

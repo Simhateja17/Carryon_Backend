@@ -12,6 +12,7 @@ const {
   anonymizeUserAccount,
   recordPrivacyConsent,
 } = require('../services/privacyAccount');
+const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
 
 const router = Router();
 router.use(authenticate);
@@ -96,13 +97,16 @@ router.put('/me', async (req, res, next) => {
   try {
     const { name, phone, profileImage, language } = req.body;
     console.log('[user] PUT /me — userId:', req.user.userId);
+    if (language !== undefined && !isSupportedLanguageCode(language)) {
+      return next(new AppError('Unsupported language', 400));
+    }
     const user = await prisma.user.update({
       where: { id: req.user.userId },
       data: {
         ...(name !== undefined && { name }),
         ...(phone !== undefined && { phone }),
         ...(profileImage !== undefined && { profileImage }),
-        ...(language !== undefined && { language }),
+        ...(language !== undefined && { language: normalizeLanguageCode(language) }),
       },
     });
     console.log('[user] PUT /me — updated userId:', user.id);

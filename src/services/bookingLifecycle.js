@@ -139,7 +139,7 @@ async function creditDriverEarning(tx, driverId, booking) {
       amount: earning,
       grossAmount: payout.grossAmount,
       platformFeeAmount: payout.platformFeeAmount,
-      description: `Delivery earning for job ${booking.id.slice(0, 8)}`,
+      description: `Delivery earning for ${booking.orderCode || booking.id.slice(0, 8)}`,
       jobId: booking.id,
     },
   });

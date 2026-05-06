@@ -126,6 +126,7 @@ mountVersionedRoute(app, '/chat', require('./routes/chat.routes'));
 mountVersionedRoute(app, '/wallet', require('./routes/wallet.routes'));
 mountVersionedRoute(app, '/payments', require('./routes/payment.routes'));
 mountVersionedRoute(app, '/support', require('./routes/support.routes'));
+mountVersionedRoute(app, '/support', require('./routes/support-ai.routes'));
 mountVersionedRoute(app, '/ratings', require('./routes/rating.routes'));
 mountVersionedRoute(app, '/invoices', require('./routes/invoice.routes'));
 

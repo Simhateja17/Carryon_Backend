@@ -1,0 +1,2 @@
+ALTER TABLE "Driver" ADD COLUMN "language" TEXT NOT NULL DEFAULT '';
+

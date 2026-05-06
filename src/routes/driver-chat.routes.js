@@ -64,4 +64,17 @@ router.post('/:bookingId', async (req, res, next) => {
   }
 });
 
+// GET /api/driver/chat/:bookingId/quick-messages — predefined quick replies
+router.get('/:bookingId/quick-messages', async (req, res, next) => {
+  try {
+    const quickMessages = (process.env.CHAT_QUICK_MESSAGES || '')
+      .split('|')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    res.json({ success: true, data: quickMessages });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

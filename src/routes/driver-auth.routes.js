@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { maskEmail } = require('../lib/maskEmail');
+const { normalizeLanguageCode } = require('../lib/supportedLanguages');
 
 const router = Router();
 
@@ -18,6 +19,8 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
       return next(new AppError('Unable to identify driver email from token', 401));
     }
     console.log('[driver-auth] POST sync — email:', maskEmail(email));
+    const requestedLanguage = req.body?.language;
+    const language = requestedLanguage !== undefined ? normalizeLanguageCode(requestedLanguage) : undefined;
     let driver = await prisma.driver.findUnique({
       where: { email },
       include: { documents: true, vehicle: true },
@@ -26,13 +29,20 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
 
     if (!driver) {
       driver = await prisma.driver.create({
-        data: { email, name: '' },
+        data: { email, name: '', ...(language !== undefined && { language }) },
         include: { documents: true, vehicle: true },
       });
       // Create wallet for new driver
       await prisma.driverWallet.create({ data: { driverId: driver.id } });
       console.log('[driver-auth] sync — created new driver id:', driver.id, 'email:', email);
     } else {
+      if (language !== undefined && driver.language !== language) {
+        driver = await prisma.driver.update({
+          where: { id: driver.id },
+          data: { language },
+          include: { documents: true, vehicle: true },
+        });
+      }
       console.log('[driver-auth] sync — found existing driver id:', driver.id, 'email:', email);
     }
 
@@ -51,6 +61,8 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
   try {
     const email = req.driverEmail;
     const { name, phone, emergencyContact } = req.body;
+    const requestedLanguage = req.body?.language ?? req.body?.preferredLanguage;
+    const language = requestedLanguage !== undefined ? normalizeLanguageCode(requestedLanguage) : undefined;
     if (!email) {
       console.error('[driver-auth] register failed: authenticated token has no email', {
         path: req.originalUrl,
@@ -73,7 +85,13 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
 
     if (!driver) {
       driver = await prisma.driver.create({
-        data: { email, name, phone: phone || '', emergencyContact: emergencyContact || '' },
+        data: {
+          email,
+          name,
+          phone: phone || '',
+          emergencyContact: emergencyContact || '',
+          ...(language !== undefined && { language }),
+        },
       });
       await prisma.driverWallet.create({ data: { driverId: driver.id } });
     } else {
@@ -83,6 +101,7 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
           name,
           ...(phone && { phone }),
           ...(emergencyContact && { emergencyContact }),
+          ...(language !== undefined && { language }),
         },
       });
     }

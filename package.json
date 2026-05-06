@@ -26,6 +26,7 @@
     "multer": "^2.0.2",
     "stripe": "^18.5.0",
     "ws": "^8.20.0",
+    "@google/generative-ai": "^0.21.0",
     "zod": "^4.4.1"
   },
   "engines": {
