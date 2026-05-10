@@ -33,6 +33,12 @@ const BUCKETS = [
     fileSizeLimit: 10 * 1024 * 1024,
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/pdf'],
   },
+  {
+    name: 'extra-charge-proofs',
+    public: false,
+    fileSizeLimit: 10 * 1024 * 1024,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+  },
 ];
 
 async function setupBuckets() {

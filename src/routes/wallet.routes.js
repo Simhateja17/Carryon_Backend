@@ -124,18 +124,28 @@ router.post('/pay', async (req, res, next) => {
     const { bookingId } = parseBody(walletPaySchema, req.body);
     console.log('[wallet] POST pay — userId:', req.user.userId, 'bookingId:', bookingId);
 
-    const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-    if (!booking || booking.userId !== req.user.userId) {
-      return next(new AppError('Booking not found', 404));
-    }
-
     const result = await prisma.$transaction(async (tx) => {
-      return payBookingFromWallet(tx, req.user.userId, booking);
+      // Read booking inside transaction for transactional consistency
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking || booking.userId !== req.user.userId) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      // Idempotency: if already paid, return current wallet without re-debiting
+      if (booking.paymentStatus === 'COMPLETED') {
+        const wallet = await tx.wallet.findUnique({ where: { userId: req.user.userId } });
+        return { wallet, amount: booking.finalPrice || 0, alreadyPaid: true };
+      }
+
+      const walletResult = await payBookingFromWallet(tx, req.user.userId, booking);
+      const amount = booking.estimatedPrice - booking.discountAmount;
+      return { wallet: walletResult, amount, alreadyPaid: false };
     });
 
-    const amount = booking.estimatedPrice - booking.discountAmount;
-    console.log('[wallet] pay — userId:', req.user.userId, 'bookingId:', bookingId, 'amount deducted:', amount, 'remaining balance:', result.balance);
-    res.json({ success: true, data: { balance: result.balance, amountPaid: amount } });
+    console.log('[wallet] pay — userId:', req.user.userId, 'bookingId:', bookingId, 'amount:', result.amount, 'alreadyPaid:', result.alreadyPaid, 'balance:', result.wallet?.balance);
+    res.json({ success: true, data: { balance: result.wallet?.balance, amountPaid: result.amount } });
   } catch (err) {
     next(err);
   }

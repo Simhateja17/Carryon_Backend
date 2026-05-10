@@ -4,6 +4,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { uploadToSupabase } = require('../lib/supabase');
+const { validateImageMagicBytes } = require('../lib/imageValidation');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -58,26 +59,42 @@ router.post('/', upload.single('image'), async (req, res, next) => {
 
     // Check if this is a JSON request (image already uploaded to Supabase)
     if (req.is('application/json') || (!req.file && req.body.imageUrl)) {
-      // Mode 2: JSON body with imageUrl
+      // Mode 2: JSON body with object path — mobile uploads to Supabase then sends the path
       type = req.body.type;
-      imageUrl = req.body.imageUrl;
+      const rawPath = req.body.imageUrl;
       expiryDate = req.body.expiryDate || null;
 
-      if (!imageUrl) return next(new AppError('imageUrl is required', 400));
+      if (!rawPath) return next(new AppError('imageUrl is required', 400));
       if (!type) return next(new AppError('Document type is required', 400));
+
+      // Reject HTTP URLs — only accept object paths
+      if (rawPath.startsWith('http')) {
+        return next(new AppError('Public URLs are not accepted. Submit the storage object path only.', 400));
+      }
+
+      // Validate object path belongs to this driver — canonical format:
+      // driver-documents/<driverId>/<documentType>_<timestamp>.<ext>
+      const allowedPrefix = `driver-documents/${req.driver.id}/`;
+      if (!rawPath.startsWith(allowedPrefix)) {
+        return next(new AppError('Document path must belong to your driver storage', 403));
+      }
+      imageUrl = rawPath;
     } else {
       // Mode 1: Multipart form upload
       if (!req.file) return next(new AppError('No image file provided', 400));
       type = req.body.type;
       if (!type) return next(new AppError('Document type is required', 400));
 
-      const ext = req.file.originalname.split('.').pop() || 'jpg';
-      const fileName = `driver-documents/${req.driver.id}/${type}_${Date.now()}.${ext}`;
+      const detected = validateImageMagicBytes(req.file);
+      if (!detected) return next(new AppError('File is not a valid image', 400));
+
+      const ext = detected.ext;
+      const fileName = `${req.driver.id}/${type}_${Date.now()}.${ext}`;
 
       try {
         imageUrl = await uploadToSupabase('driver-documents', req.file, fileName, { upsert: true });
       } catch (error) {
-        console.error('Supabase upload error:', error);
+        console.error('[driver-documents] upload failed for driverId:', req.driver.id);
         return next(new AppError('Failed to upload document', 500));
       }
     }
@@ -101,7 +118,7 @@ router.post('/', upload.single('image'), async (req, res, next) => {
         expiryDate,
       },
     });
-    console.log('[driver-documents] document upserted — driverId:', req.driver.id, 'type:', type, 'docId:', document.id, 'status:', document.status);
+    console.log('[driver-documents] document upserted — driverId:', req.driver.id, 'type:', type, 'status:', document.status);
 
     res.status(201).json({ success: true, data: document });
   } catch (err) {
@@ -130,8 +147,11 @@ router.put('/:id', upload.single('image'), async (req, res, next) => {
     if (doc.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
     if (!req.file) return next(new AppError('No image file provided', 400));
 
-    const ext = req.file.originalname.split('.').pop() || 'jpg';
-    const fileName = `driver-documents/${req.driver.id}/${doc.type}_${Date.now()}.${ext}`;
+    const detected = validateImageMagicBytes(req.file);
+    if (!detected) return next(new AppError('File is not a valid image', 400));
+
+    const ext = detected.ext;
+    const fileName = `${req.driver.id}/${doc.type}_${Date.now()}.${ext}`;
 
     let publicUrl;
     try {

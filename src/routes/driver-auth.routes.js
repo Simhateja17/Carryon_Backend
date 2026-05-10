@@ -34,7 +34,7 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
       });
       // Create wallet for new driver
       await prisma.driverWallet.create({ data: { driverId: driver.id } });
-      console.log('[driver-auth] sync — created new driver id:', driver.id, 'email:', email);
+      console.log('[driver-auth] sync — created new driver id:', driver.id);
     } else {
       if (language !== undefined && driver.language !== language) {
         driver = await prisma.driver.update({
@@ -43,7 +43,7 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
           include: { documents: true, vehicle: true },
         });
       }
-      console.log('[driver-auth] sync — found existing driver id:', driver.id, 'email:', email);
+      console.log('[driver-auth] sync — found existing driver id:', driver.id);
     }
 
     res.json({ success: true, driver, isNewDriver });
@@ -70,7 +70,7 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
       });
       return next(new AppError('Unable to identify driver email from token', 401));
     }
-    console.log('[driver-auth] POST register — email:', maskEmail(email), 'name:', name, 'phone:', phone);
+    console.log('[driver-auth] POST register — email:', maskEmail(email));
 
     if (!name) {
       console.error('[driver-auth] register failed: missing required name', {

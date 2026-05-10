@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
@@ -13,8 +14,25 @@ const {
   toDeliveryJob,
   executeDriverLifecycleCommand,
 } = require('../services/deliveryLifecycle');
+const { evaluateDriverEligibility } = require('../services/driverEligibility');
+const { haversineKm } = require('../lib/distance');
+const { DRIVER_SEARCH_RADIUS_KM, OFFER_EXPIRY_MS } = require('../services/businessConfig');
+const { uploadToSupabase } = require('../lib/supabase');
+const { validateImageMagicBytes } = require('../lib/imageValidation');
 
 const router = Router();
+
+const uploadProof = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new AppError('Only image files are allowed', 400), false);
+    }
+  },
+});
 router.use(authenticateDriver, requireDriver);
 
 const driverLabel = (d) => d?.name?.trim() || d?.email || d?.id || 'unknown';
@@ -120,6 +138,21 @@ router.get('/:id', async (req, res, next) => {
       include: bookingInclude,
     });
     if (!booking) return next(new AppError('Job not found', 404));
+
+    // If job is assigned to a driver, only that driver can view it
+    if (booking.driverId && booking.driverId !== req.driver.id) {
+      return next(new AppError('Job not found', 404));
+    }
+
+    // If job is unassigned, verify this driver is eligible to see it
+    if (!booking.driverId) {
+      const eligible = await getIncomingBookingsForDriver(req.driver, bookingInclude);
+      const isEligible = eligible.some(b => b.id === booking.id);
+      if (!isEligible) {
+        return next(new AppError('Job not found', 404));
+      }
+    }
+
     res.json({ success: true, data: toDeliveryJob(booking) });
   } catch (err) {
     next(err);
@@ -152,7 +185,81 @@ router.post('/:id/accept', async (req, res, next) => {
       return next(new AppError('Job is no longer available', 409));
     }
 
+    // ── Eligibility checks ──────────────────────────────────
+    // 1. Driver must be verified with approved, unexpired documents
+    const driverWithDocs = await prisma.driver.findUnique({
+      where: { id: req.driver.id },
+      include: { documents: true, vehicle: true },
+    });
+    const eligibility = evaluateDriverEligibility(driverWithDocs);
+    if (!eligibility.canGoOnline) {
+      return next(new AppError('You must be verified with approved documents to accept jobs', 403));
+    }
+
+    // 2. Driver must be online
+    if (driverWithDocs.isOnline === false) {
+      return next(new AppError('You must be online to accept jobs', 403));
+    }
+
+    // 3. Vehicle type must match
+    if (booking.vehicleType && driverWithDocs.vehicle?.type && driverWithDocs.vehicle.type !== booking.vehicleType) {
+      return next(new AppError('Your vehicle type does not match this job', 400));
+    }
+
+    // 4. Distance check — require valid location unless admin-targeted
+    const isAdminTargeted = await (async () => {
+      // actionData is a String column containing JSON — query candidates then parse
+      const candidates = await prisma.driverNotification.findMany({
+        where: {
+          driverId: req.driver.id,
+          type: 'JOB_REQUEST',
+          actionData: { contains: booking.id },
+        },
+        select: { actionData: true },
+      });
+      return candidates.some((n) => {
+        try {
+          const parsed = JSON.parse(n.actionData);
+          return parsed && parsed.bookingId === booking.id;
+        } catch {
+          return false;
+        }
+      });
+    })();
+
+    if (!isAdminTargeted) {
+      if (!Number.isFinite(driverWithDocs.currentLatitude) || !Number.isFinite(driverWithDocs.currentLongitude)) {
+        return next(new AppError('Current location is required to accept jobs', 400));
+      }
+      if (booking.pickupAddress) {
+        const distance = haversineKm(
+          driverWithDocs.currentLatitude,
+          driverWithDocs.currentLongitude,
+          booking.pickupAddress.latitude,
+          booking.pickupAddress.longitude
+        );
+        if (distance > DRIVER_SEARCH_RADIUS_KM) {
+          return next(new AppError('You are too far from the pickup location', 400));
+        }
+      }
+    }
+
+    // 5. Must not have rejected this job
+    const rejection = await prisma.bookingRejection.findUnique({
+      where: { driverId_bookingId: { driverId: req.driver.id, bookingId: req.params.id } },
+    });
+    if (rejection) {
+      return next(new AppError('You cannot accept a job you previously rejected', 400));
+    }
+
+    // 6. Offer must not be expired
+    const offerAge = Date.now() - new Date(booking.createdAt).getTime();
+    if (offerAge > OFFER_EXPIRY_MS) {
+      return next(new AppError('This job offer has expired', 410));
+    }
+
     const claimResult = await prisma.$transaction(async (tx) => {
+      const assignedAt = new Date();
       const result = await tx.booking.updateMany({
         where: {
           id: req.params.id,
@@ -162,6 +269,8 @@ router.post('/:id/accept', async (req, res, next) => {
         data: {
           driverId: req.driver.id,
           status: 'DRIVER_ASSIGNED',
+          driverAssignedAt: assignedAt,
+          driverArrivedAt: null,
         },
       });
       if (result.count === 1) {
@@ -171,7 +280,7 @@ router.post('/:id/accept', async (req, res, next) => {
           entityType: 'Booking',
           entityId: req.params.id,
           oldValue: { status: 'SEARCHING_DRIVER', driverId: null },
-          newValue: { status: 'DRIVER_ASSIGNED', driverId: req.driver.id },
+          newValue: { status: 'DRIVER_ASSIGNED', driverId: req.driver.id, driverAssignedAt: assignedAt },
         });
       }
       return result;
@@ -216,6 +325,84 @@ router.post('/:id/reject', async (req, res, next) => {
       update: {},
     });
     res.json({ success: true, message: 'Job rejected' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/driver/jobs/:id/extra-charges/upload-proof — upload receipt proof image
+router.post('/:id/extra-charges/upload-proof', uploadProof.single('proof'), async (req, res, next) => {
+  try {
+    if (!req.file) return next(new AppError('No proof image provided', 400));
+
+    const detected = validateImageMagicBytes(req.file);
+    if (!detected) return next(new AppError('File is not a valid image', 400));
+
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    if (!booking) return next(new AppError('Job not found', 404));
+    if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+
+    const ext = detected.ext;
+    const fileName = `${req.driver.id}/${booking.id}_${Date.now()}.${ext}`;
+
+    try {
+      const proofPath = await uploadToSupabase('extra-charge-proofs', req.file, fileName, { upsert: true });
+      res.status(201).json({ success: true, data: { proofPath } });
+    } catch (error) {
+      console.error('Supabase upload error:', error);
+      return next(new AppError('Failed to upload proof', 500));
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/driver/jobs/:id/extra-charges — submit toll/parking for admin approval
+router.post('/:id/extra-charges', async (req, res, next) => {
+  try {
+    const type = String(req.body?.type || '').trim().toUpperCase();
+    const amount = Number(req.body?.amount);
+    const proofPath = String(req.body?.proofPath || '').trim();
+    const note = String(req.body?.note || '').trim();
+    if (!['TOLL', 'PARKING'].includes(type)) {
+      return next(new AppError('Extra charge type must be TOLL or PARKING', 400));
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return next(new AppError('Amount must be greater than 0', 400));
+    }
+    if (!proofPath) {
+      return next(new AppError('Receipt proof path is required', 400));
+    }
+
+    // Reject HTTP URLs — only accept object paths
+    if (proofPath.startsWith('http')) {
+      return next(new AppError('Public URLs are not accepted. Submit the storage object path only.', 400));
+    }
+
+    // Validate path belongs to this driver — format: extra-charge-proofs/<driverId>/<bookingId>_<timestamp>.<ext>
+    const allowedPrefix = `extra-charge-proofs/${req.driver.id}/`;
+    if (!proofPath.startsWith(allowedPrefix)) {
+      return next(new AppError('Proof path must belong to your driver storage', 403));
+    }
+
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    if (!booking) return next(new AppError('Job not found', 404));
+    if (booking.driverId !== req.driver.id) return next(new AppError('Not authorized', 403));
+    if (['CANCELLED', 'DELIVERED'].includes(booking.status)) {
+      return next(new AppError('Extra charges can only be submitted for active jobs', 400));
+    }
+
+    const charge = await prisma.bookingExtraCharge.create({
+      data: {
+        bookingId: booking.id,
+        driverId: req.driver.id,
+        type,
+        amount: Math.round(amount * 100) / 100,
+        proofUrl: proofPath,
+        note,
+      },
+    });
+    res.status(201).json({ success: true, data: charge });
   } catch (err) {
     next(err);
   }

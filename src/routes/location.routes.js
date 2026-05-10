@@ -10,7 +10,7 @@ const router = express.Router();
 // GET /api/location/search-places?query=...&lat=...&lng=...
 router.get('/search-places', async (req, res, next) => {
   try {
-    console.log(`[location] GET /search-places — query="${req.query.query}" lat=${req.query.lat} lng=${req.query.lng}`);
+    console.log(`[location] GET /search-places — queryLen=${(req.query.query || '').length}`);
     const { query, lat, lng } = req.query;
     if (!query) {
       return res.status(400).json({ success: false, message: 'query parameter is required' });
@@ -27,7 +27,7 @@ router.get('/search-places', async (req, res, next) => {
 // GET /api/location/reverse-geocode?lat=...&lng=...
 router.get('/reverse-geocode', async (req, res, next) => {
   try {
-    console.log(`[location] GET /reverse-geocode — lat=${req.query.lat} lng=${req.query.lng}`);
+    console.log('[location] GET /reverse-geocode');
     const { lat, lng } = req.query;
     if (!lat || !lng) {
       return res.status(400).json({ success: false, message: 'lat and lng parameters are required' });
@@ -43,7 +43,7 @@ router.get('/reverse-geocode', async (req, res, next) => {
 // POST /api/location/calculate-route
 router.post('/calculate-route', authenticateToken, async (req, res, next) => {
   try {
-    console.log(`[location] POST /calculate-route — origin=(${req.body.originLat},${req.body.originLng}) dest=(${req.body.destLat},${req.body.destLng})`);
+    console.log('[location] POST /calculate-route');
     const { originLat, originLng, destLat, destLng } = req.body;
     if (originLat == null || originLng == null || destLat == null || destLng == null) {
       return res.status(400).json({ success: false, message: 'originLat, originLng, destLat, destLng are required' });
@@ -149,7 +149,7 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
 // GET /api/location/autocomplete?query=...&lat=...&lng=...
 router.get('/autocomplete', async (req, res, next) => {
   try {
-    console.log(`[location] GET /autocomplete — query="${req.query.query}" lat=${req.query.lat} lng=${req.query.lng}`);
+    console.log(`[location] GET /autocomplete — queryLen=${(req.query.query || '').length}`);
     const { query, lat, lng } = req.query;
     if (!query) {
       return res.status(400).json({ success: false, message: 'query parameter is required' });
@@ -165,7 +165,7 @@ router.get('/autocomplete', async (req, res, next) => {
 // GET /api/location/nearby?lat=...&lng=...&categories=...&radius=...
 router.get('/nearby', authenticateToken, async (req, res, next) => {
   try {
-    console.log(`[location] GET /nearby — lat=${req.query.lat} lng=${req.query.lng} categories=${req.query.categories} radius=${req.query.radius}`);
+    console.log(`[location] GET /nearby — categories=${req.query.categories} radius=${req.query.radius}`);
     const { lat, lng, categories, radius } = req.query;
     if (!lat || !lng) {
       return res.status(400).json({ success: false, message: 'lat and lng parameters are required' });
@@ -182,7 +182,7 @@ router.get('/nearby', authenticateToken, async (req, res, next) => {
 router.post('/geocode', authenticateToken, async (req, res, next) => {
   try {
     const { address, placeId } = req.body;
-    console.log(`[location] POST /geocode — address="${address}" placeId="${placeId}"`);
+    console.log(`[location] POST /geocode — hasAddress=${!!address} hasPlaceId=${!!placeId}`);
 
     if (!address && !placeId) {
       return res.status(400).json({ success: false, message: 'address or placeId is required' });
@@ -214,7 +214,7 @@ router.post('/snap-to-roads', authenticateToken, async (req, res, next) => {
 // POST /api/location/isoline
 router.post('/isoline', authenticateToken, async (req, res, next) => {
   try {
-    console.log(`[location] POST /isoline — lat=${req.body.lat} lng=${req.body.lng} minutes=${req.body.minutes}`);
+    console.log(`[location] POST /isoline — minutes=${req.body.minutes}`);
     const { lat, lng, minutes } = req.body;
     if (lat == null || lng == null || !minutes) {
       return res.status(400).json({ success: false, message: 'lat, lng, and minutes are required' });
@@ -229,7 +229,7 @@ router.post('/isoline', authenticateToken, async (req, res, next) => {
 
 // GET /api/location/static-map
 router.get('/static-map', authenticateToken, async (req, res) => {
-  console.log(`[location] GET /static-map — lat=${req.query.lat} lng=${req.query.lng} zoom=${req.query.zoom} ${req.query.width}x${req.query.height}`);
+  console.log(`[location] GET /static-map — zoom=${req.query.zoom} ${req.query.width}x${req.query.height}`);
   const { lat, lng, zoom = 13, width = 400, height = 300 } = req.query;
   if (!lat || !lng) {
     return res.status(400).json({ success: false, message: 'lat and lng parameters are required' });

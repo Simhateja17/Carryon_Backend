@@ -15,7 +15,7 @@ jest.mock('../../lib/pushNotifications', () => ({
 }));
 
 const prisma = require('../../lib/prisma');
-const { getIncomingBookingsForDriver } = require('../dispatch');
+const { getIncomingBookingsForDriver, selectEligibleDriversForBooking } = require('../dispatch');
 
 describe('Dispatch — incoming jobs', () => {
   beforeEach(() => {
@@ -79,5 +79,44 @@ describe('Dispatch — incoming jobs', () => {
       })
     );
     expect(result.map((booking) => booking.id)).toEqual(['booking-targeted', 'booking-nearby']);
+  });
+
+  test('selects all eligible nearby online vehicle-compatible drivers for MVP broadcast', () => {
+    const booking = {
+      vehicleType: 'CAR',
+      pickupAddress: { latitude: 3.1, longitude: 101.6 },
+    };
+    const drivers = [
+      {
+        id: 'eligible-1',
+        isOnline: true,
+        currentLatitude: 3.1001,
+        currentLongitude: 101.6001,
+        vehicle: { type: 'CAR' },
+      },
+      {
+        id: 'wrong-vehicle',
+        isOnline: true,
+        currentLatitude: 3.1001,
+        currentLongitude: 101.6001,
+        vehicle: { type: 'BIKE' },
+      },
+      {
+        id: 'offline',
+        isOnline: false,
+        currentLatitude: 3.1001,
+        currentLongitude: 101.6001,
+        vehicle: { type: 'CAR' },
+      },
+      {
+        id: 'far-away',
+        isOnline: true,
+        currentLatitude: 4.1,
+        currentLongitude: 102.6,
+        vehicle: { type: 'CAR' },
+      },
+    ];
+
+    expect(selectEligibleDriversForBooking(booking, drivers).map((driver) => driver.id)).toEqual(['eligible-1']);
   });
 });

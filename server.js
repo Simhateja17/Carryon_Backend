@@ -5,6 +5,7 @@ const app = require('./src/app');
 const { attachLiveTracking } = require('./src/services/liveTracking');
 const { startWebhookRetryLoop } = require('./src/services/webhookInbox');
 const { startDriverPayoutReconciliationLoop } = require('./src/services/driverPayoutReconciliation');
+const { startDocumentExpiryLoop } = require('./src/services/driverEligibility');
 const { validateSupabaseConnection } = require('./src/lib/supabase');
 
 const DISCOVERY_PORT = 4999;
@@ -56,6 +57,7 @@ async function start() {
     startDiscoveryServer(PORT);
     startWebhookRetryLoop();
     startDriverPayoutReconciliationLoop();
+    startDocumentExpiryLoop();
   });
 }
 

@@ -84,6 +84,69 @@ async function refundBooking(prisma, userId, bookingId, amount) {
   await prisma.$transaction((tx) => refundBookingTx(tx, userId, bookingId, amount));
 }
 
+async function debitBookingAdjustmentTx(tx, userId, bookingId, amount, description) {
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return null;
+  const wallet = await tx.wallet.findUnique({ where: { userId } });
+  if (!wallet) return null;
+
+  await tx.wallet.update({
+    where: { id: wallet.id },
+    data: { balance: { decrement: parsedAmount } },
+  });
+  await tx.walletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      type: 'PAYMENT',
+      amount: -parsedAmount,
+      description,
+      referenceId: bookingId,
+    },
+  });
+  await recordAudit(tx, {
+    actor: { actorId: userId, actorType: 'USER' },
+    action: 'WALLET_ADJUSTMENT_DEBIT',
+    entityType: 'Booking',
+    entityId: bookingId,
+    newValue: { walletId: wallet.id, amount: -parsedAmount, description },
+  });
+  return wallet;
+}
+
+async function creditDriverAdjustmentTx(tx, driverId, bookingId, amount, description) {
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return null;
+  const wallet = await tx.driverWallet.findUnique({ where: { driverId } });
+  if (!wallet) return null;
+
+  await tx.driverWallet.update({
+    where: { id: wallet.id },
+    data: {
+      balance: { increment: parsedAmount },
+      lifetimeEarnings: { increment: parsedAmount },
+    },
+  });
+  await tx.driverWalletTransaction.create({
+    data: {
+      walletId: wallet.id,
+      type: 'ADJUSTMENT',
+      amount: parsedAmount,
+      grossAmount: parsedAmount,
+      platformFeeAmount: 0,
+      description,
+      jobId: bookingId,
+    },
+  });
+  await recordAudit(tx, {
+    actor: { actorId: driverId, actorType: 'DRIVER' },
+    action: 'DRIVER_WALLET_ADJUSTMENT',
+    entityType: 'Booking',
+    entityId: bookingId,
+    newValue: { walletId: wallet.id, amount: parsedAmount, description },
+  });
+  return wallet;
+}
+
 async function applyUserTipTx(tx, userId, bookingId, tipAmount) {
   const amount = Number(tipAmount);
   if (!Number.isFinite(amount) || amount <= 0) return null;
@@ -198,12 +261,34 @@ async function applyReferralBonus(tx, referrerId, refereeId, referralCode) {
 // ── Wallet payment for existing booking ─────────────────────
 
 async function payBookingFromWallet(tx, userId, booking) {
+  // Guard: reject if already paid
+  if (booking.paymentStatus === 'COMPLETED') {
+    const err = new Error('Booking is already paid');
+    err.statusCode = 409;
+    throw err;
+  }
+
   const amount = booking.estimatedPrice - booking.discountAmount;
 
   const wallet = await tx.wallet.findUnique({ where: { userId } });
   if (!wallet || wallet.balance < amount) {
     const err = new Error('Insufficient wallet balance');
     err.statusCode = 400;
+    throw err;
+  }
+
+  // Conditional update: only move from unpaid to paid
+  const updateResult = await tx.booking.updateMany({
+    where: {
+      id: booking.id,
+      paymentStatus: { not: 'COMPLETED' },
+    },
+    data: { paymentMethod: 'WALLET', paymentStatus: 'COMPLETED', finalPrice: amount },
+  });
+
+  if (updateResult.count === 0) {
+    const err = new Error('Booking is already paid');
+    err.statusCode = 409;
     throw err;
   }
 
@@ -227,10 +312,6 @@ async function payBookingFromWallet(tx, userId, booking) {
     entityId: booking.id,
     newValue: { walletId: wallet.id, amount: -amount },
   });
-  await tx.booking.update({
-    where: { id: booking.id },
-    data: { paymentMethod: 'WALLET', paymentStatus: 'COMPLETED', finalPrice: amount },
-  });
 
   return tx.wallet.findUnique({ where: { id: wallet.id } });
 }
@@ -239,6 +320,8 @@ module.exports = {
   reserveBookingPayment,
   refundBookingTx,
   refundBooking,
+  debitBookingAdjustmentTx,
+  creditDriverAdjustmentTx,
   creditStripeTopUp,
   applyReferralBonus,
   payBookingFromWallet,

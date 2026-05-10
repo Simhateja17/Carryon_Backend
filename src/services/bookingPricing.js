@@ -4,6 +4,7 @@
 const prisma = require('../lib/prisma');
 const locationProvider = require('./locationProvider');
 const { VEHICLE_RATE_PER_KM, OFFLOADING_FEE, BOOKING_TAX_RATE } = require('./businessConfig');
+const { coerceMvpBookingMode } = require('./bookingPolicy');
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -27,7 +28,7 @@ function coordinate(value) {
 }
 
 function normalizedDeliveryMode(deliveryMode) {
-  const mode = String(deliveryMode || 'Regular').trim().toLowerCase();
+  const mode = coerceMvpBookingMode(deliveryMode).trim().toLowerCase();
   if (mode === 'priority') return 'priority';
   if (mode === 'pooling') return 'pooling';
   return 'regular';

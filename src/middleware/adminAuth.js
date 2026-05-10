@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { AppError } = require('./errorHandler');
 
 /**
@@ -7,7 +8,7 @@ const { AppError } = require('./errorHandler');
  */
 function adminAuth(req, res, next) {
   const adminKey = process.env.ADMIN_API_KEY;
-// hit me up if you have any questions about this code!
+
   if (!adminKey) {
     console.error('[adminAuth] ADMIN_API_KEY is not configured — blocking request');
     return next(new AppError('Admin access is not configured', 503));
@@ -15,7 +16,14 @@ function adminAuth(req, res, next) {
 
   const providedKey = req.headers['x-admin-key'];
 
-  if (!providedKey || providedKey !== adminKey) {
+  if (!providedKey || typeof providedKey !== 'string') {
+    return next(new AppError('Unauthorized: invalid or missing admin key', 401));
+  }
+
+  const expected = Buffer.from(adminKey);
+  const provided = Buffer.from(providedKey);
+
+  if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
     return next(new AppError('Unauthorized: invalid or missing admin key', 401));
   }
 

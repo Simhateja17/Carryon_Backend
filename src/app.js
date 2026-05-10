@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
+const { adminAuth } = require('./middleware/adminAuth');
 const prisma = require('./lib/prisma');
 const {
   legacyApiHeaders,
@@ -72,43 +73,28 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Storage diagnostic — call on prod to verify Supabase storage config
-app.get('/health/storage', async (req, res) => {
+// Storage diagnostic — protected with admin auth, no key prefixes exposed
+app.get('/health/storage', adminAuth, async (req, res) => {
   const { getSupabaseAdmin } = require('./lib/supabase');
-  const keyConfigured = !!process.env.SUPABASE_SERVICE_KEY;
-  const keyPrefix = keyConfigured
-    ? process.env.SUPABASE_SERVICE_KEY.substring(0, 12) + '...'
-    : 'NOT SET';
 
   try {
     const { data: buckets, error } = await getSupabaseAdmin().storage.listBuckets();
     if (error) {
       console.error('[health/storage] listBuckets failed:', error.message);
-      return res.status(503).json({
-        status: 'error',
-        storage: 'unreachable',
-        keyConfigured,
-        keyPrefix,
-        error: error.message,
-        hint: !keyConfigured
-          ? 'SUPABASE_SERVICE_KEY is not set in this environment'
-          : 'Key is set but Supabase rejected it — ensure it is the service_role key, not the anon key',
-      });
+      return res.status(503).json({ status: 'error', storage: 'unreachable' });
     }
     const bucketNames = (buckets || []).map(b => b.name);
-    const hasPackageImages = bucketNames.includes('package-images');
+    const requiredBuckets = ['package-images', 'driver-documents', 'extra-charge-proofs'];
+    const missingBuckets = requiredBuckets.filter(b => !bucketNames.includes(b));
     res.json({
-      status: hasPackageImages ? 'ok' : 'degraded',
+      status: missingBuckets.length === 0 ? 'ok' : 'degraded',
       storage: 'reachable',
-      keyConfigured,
-      keyPrefix,
       buckets: bucketNames,
-      packageImagesBucketExists: hasPackageImages,
-      hint: hasPackageImages ? null : 'package-images bucket missing — run: node scripts/setup-storage-buckets.js',
+      ...(missingBuckets.length > 0 && { missingBuckets }),
     });
   } catch (err) {
     console.error('[health/storage] unexpected error:', err.message);
-    res.status(500).json({ status: 'error', error: err.message, keyConfigured, keyPrefix });
+    res.status(500).json({ status: 'error' });
   }
 });
 
@@ -146,9 +132,9 @@ mountVersionedRoute(app, '/driver/chat', require('./routes/driver-chat.routes'))
 mountVersionedRoute(app, '/driver/payouts', require('./routes/driver-payouts.routes'));
 
 // Admin routes (protected by admin key)
-const { adminAuth } = require('./middleware/adminAuth');
 mountVersionedRoute(app, '/admin/notifications', require('./routes/admin-notifications.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/drivers', require('./routes/admin-drivers.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/extra-charges', require('./routes/admin-extra-charges.routes'), adminAuth);
 console.log('[app] All routes mounted');
 
 // Error handling

@@ -4,6 +4,10 @@ const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { COMPANY_INVOICE_PROFILE } = require('../services/businessConfig');
+const {
+  findAppliedBookingAdjustments,
+  invoiceAmountsForBookingWithAdjustments,
+} = require('../services/bookingAdjustments');
 
 const router = Router();
 router.use(authenticate);
@@ -33,25 +37,22 @@ router.post('/:bookingId', async (req, res, next) => {
       return res.json({ success: true, data: booking.invoice });
     }
 
-    const price = booking.finalPrice || booking.estimatedPrice;
-    const taxRate = 0.05;
-    const subtotal = Math.round((price / (1 + taxRate)) * 100) / 100;
-    const tax = Math.round((price - subtotal) * 100) / 100;
+    const { amounts } = await invoiceAmountsForBookingWithAdjustments(prisma, booking);
 
     const invoice = await prisma.invoice.create({
       data: {
         bookingId: req.params.bookingId,
         userId: req.user.userId,
         invoiceNumber: generateInvoiceNumber(),
-        subtotal,
-        tax,
+        subtotal: amounts.subtotal,
+        tax: amounts.tax,
         discount: booking.discountAmount || 0,
-        total: price,
-        taxRate,
+        total: amounts.total,
+        taxRate: amounts.taxRate,
         currency: 'MYR',
       },
     });
-    console.log('[invoice] Generated — invoiceId:', invoice.id, 'invoiceNumber:', invoice.invoiceNumber, 'bookingId:', req.params.bookingId, 'total:', price);
+    console.log('[invoice] Generated — invoiceId:', invoice.id, 'invoiceNumber:', invoice.invoiceNumber, 'bookingId:', req.params.bookingId, 'total:', amounts.total);
 
     res.status(201).json({ success: true, data: invoice });
   } catch (err) {
@@ -119,11 +120,13 @@ router.get('/:bookingId/detail', async (req, res, next) => {
         user: { select: { name: true, email: true, phone: true } },
       },
     });
+    const adjustments = await findAppliedBookingAdjustments(prisma, req.params.bookingId);
 
     res.json({
       success: true,
       data: {
         invoice,
+        adjustments,
         booking: {
           id: booking.id,
           vehicleType: booking.vehicleType,

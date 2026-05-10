@@ -45,6 +45,19 @@ function filterNearbyWithVehicleMatch(bookings, driverLat, driverLng, driverVehi
   });
 }
 
+function selectEligibleDriversForBooking(booking, drivers) {
+  const pickupLat = booking.pickupAddress.latitude;
+  const pickupLng = booking.pickupAddress.longitude;
+  const bookingVehicleType = booking.vehicleType;
+
+  return drivers.filter((driver) => {
+    const withinRadius =
+      haversineKm(pickupLat, pickupLng, driver.currentLatitude, driver.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
+    const vehicleMatches = !bookingVehicleType || !driver.vehicle?.type || driver.vehicle.type === bookingVehicleType;
+    return driver.isOnline !== false && withinRadius && vehicleMatches;
+  });
+}
+
 async function getIncomingBookingsForDriver(driver, bookingInclude) {
   // Fetch bookings this driver has already rejected
   const rejections = await prisma.bookingRejection.findMany({
@@ -126,17 +139,11 @@ async function notifyNearbyDrivers(booking) {
     },
   });
 
-  const pickupLat = booking.pickupAddress.latitude;
-  const pickupLng = booking.pickupAddress.longitude;
   const bookingVehicleType = booking.vehicleType;
 
   console.log('[dispatch] driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers:', drivers.length);
 
-  const nearbyDrivers = drivers.filter(d => {
-    const withinRadius = haversineKm(pickupLat, pickupLng, d.currentLatitude, d.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
-    const vehicleMatches = !bookingVehicleType || !d.vehicle?.type || d.vehicle.type === bookingVehicleType;
-    return withinRadius && vehicleMatches;
-  });
+  const nearbyDrivers = selectEligibleDriversForBooking(booking, drivers);
 
   console.log('[dispatch] nearby drivers (within', DRIVER_SEARCH_RADIUS_KM, 'km):', nearbyDrivers.length,
     '| notifying:', nearbyDrivers.map(d => d.name));
@@ -182,18 +189,9 @@ async function notifyDriversForAdminBooking(booking, driverIds) {
     },
   });
 
-  const nearbyDrivers = candidateDrivers.filter((driver) => {
-    if (isDirectTargeted) return true;
-    const withinRadius =
-      haversineKm(
-        booking.pickupAddress.latitude,
-        booking.pickupAddress.longitude,
-        driver.currentLatitude,
-        driver.currentLongitude
-      ) <= DRIVER_SEARCH_RADIUS_KM;
-    const vehicleMatches = !driver.vehicle?.type || driver.vehicle.type === booking.vehicleType;
-    return withinRadius && vehicleMatches;
-  });
+  const nearbyDrivers = isDirectTargeted
+    ? candidateDrivers
+    : selectEligibleDriversForBooking(booking, candidateDrivers);
 
   const targetedDrivers = nearbyDrivers.map((d) => ({
     id: d.id,
@@ -252,6 +250,7 @@ module.exports = {
   notifyNearbyDrivers,
   notifyDriversForAdminBooking,
   filterNearbyWithVehicleMatch,
+  selectEligibleDriversForBooking,
   sortByPayout,
   OFFER_EXPIRY_MS,
 };

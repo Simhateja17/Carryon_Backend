@@ -68,6 +68,20 @@ router.get('/:id', async (req, res, next) => {
       return next(new AppError('Driver not found', 404));
     }
 
+    // Replace stored object paths with short-lived signed URLs for admin preview
+    const { getSignedUrl } = require('../lib/supabase');
+    if (driver.documents) {
+      for (const doc of driver.documents) {
+        if (doc.imageUrl && !doc.imageUrl.startsWith('http')) {
+          try {
+            doc.imageUrl = await getSignedUrl(doc.imageUrl, 3600);
+          } catch (_) {
+            // Keep original path if signing fails
+          }
+        }
+      }
+    }
+
     res.json({ success: true, data: driver });
   } catch (err) {
     next(err);

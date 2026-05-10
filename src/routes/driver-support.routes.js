@@ -114,7 +114,7 @@ router.post('/tickets/:id/reply', async (req, res, next) => {
 // POST /api/driver/support/sos — emergency
 router.post('/sos', async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, accuracyMeters, capturedAt } = req.body;
     console.log('[driver-support] POST SOS — driverId:', req.driver.id, 'location:', latitude, longitude);
 
     const ticket = await prisma.driverSupportTicket.create({
@@ -122,12 +122,12 @@ router.post('/sos', async (req, res, next) => {
         driverId: req.driver.id,
         subject: 'SOS Emergency',
         category: 'GENERAL',
-        description: `Emergency SOS triggered at location: ${latitude}, ${longitude}`,
+        description: `Emergency SOS triggered. Dial 999 immediately. Location: ${latitude}, ${longitude}. Accuracy: ${accuracyMeters || 'unknown'}m. Captured at: ${capturedAt || new Date().toISOString()}`,
         priority: 'URGENT',
         messages: {
           create: {
             senderId: req.driver.id,
-            message: `SOS Emergency! Location: ${latitude}, ${longitude}`,
+            message: `SOS Emergency. Driver should call 999. Location snapshot: ${latitude}, ${longitude}`,
           },
         },
       },
@@ -144,7 +144,14 @@ router.post('/sos', async (req, res, next) => {
     });
     console.log('[driver-support] SOS ticket created — ticketId:', ticket.id, 'driverId:', req.driver.id, 'location:', latitude, longitude);
 
-    res.status(201).json({ success: true, data: ticket });
+    res.status(201).json({
+      success: true,
+      data: {
+        ticket,
+        emergencyNumber: '999',
+        action: 'CALL_EMERGENCY_SERVICES',
+      },
+    });
   } catch (err) {
     next(err);
   }

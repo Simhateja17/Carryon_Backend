@@ -679,7 +679,7 @@ describe('Driver job route side effects', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.job.status).toBe('PENDING');
     expect(tx.booking.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: { status: 'SEARCHING_DRIVER', driverId: null },
+      data: expect.objectContaining({ status: 'SEARCHING_DRIVER', driverId: null }),
     }));
     expect(tx.bookingRejection.upsert).toHaveBeenCalledWith({
       where: { driverId_bookingId: { driverId: 'driver-1', bookingId: 'booking-1' } },

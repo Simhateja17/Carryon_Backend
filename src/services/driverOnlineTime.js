@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { assertDriverCanGoOnline } = require('./driverEligibility');
 
 function hoursBetween(start, end) {
   return Math.max(0, end.getTime() - start.getTime()) / (60 * 60 * 1000);
@@ -13,6 +14,9 @@ function sessionOverlapHours(session, windowStart, windowEnd) {
 }
 
 async function setDriverOnlineStatus(driverId, isOnline, { db = prisma, now = new Date() } = {}) {
+  if (isOnline) {
+    await assertDriverCanGoOnline(driverId, { db, now });
+  }
   return db.$transaction(async (tx) => {
     const driver = await tx.driver.update({
       where: { id: driverId },

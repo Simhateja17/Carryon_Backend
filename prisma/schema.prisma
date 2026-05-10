@@ -314,6 +314,7 @@ model Driver {
   pushDevices        PushDevice[]
   payouts            DriverPayout[]
   onlineSessions     DriverOnlineSession[]
+  extraCharges       BookingExtraCharge[]
 }
 
 model DriverOnlineSession {
@@ -492,6 +493,8 @@ model Booking {
   paymentStatus     PaymentStatus @default(PENDING)
   packageImageUrl   String?
   driverId          String?
+  driverAssignedAt  DateTime?
+  driverArrivedAt   DateTime?
   otp               String        @default("")
   dispatchSource    String        @default("USER_APP")
   deliveryOtp       String        @default("")
@@ -502,6 +505,13 @@ model Booking {
   deliveryProofUrl  String?
   deliveredAt       DateTime?
   eta               Int?
+  cancelledBy       String?
+  cancelReason      String        @default("")
+  cancellationFee   Float         @default(0)
+  cancellationDriverShare Float   @default(0)
+  cancellationPlatformShare Float @default(0)
+  waitTimeMinutes   Int           @default(0)
+  waitTimeCharge    Float         @default(0)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
@@ -517,6 +527,48 @@ model Booking {
   bookingRejections BookingRejection[]
   idempotencyKeys   IdempotencyKey[]
   lifecycleEvents   DeliveryLifecycleEvent[]
+  extraCharges      BookingExtraCharge[]
+  adjustments        BookingAdjustment[]
+}
+
+model BookingAdjustment {
+  id          String   @id @default(uuid())
+  bookingId   String
+  type        String
+  amount      Float
+  description String   @default("")
+  status      String   @default("APPLIED")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@unique([bookingId, type])
+  @@index([bookingId, status])
+  @@index([status, createdAt])
+}
+
+model BookingExtraCharge {
+  id                 String   @id @default(uuid())
+  bookingId          String
+  driverId           String
+  type               String
+  amount             Float
+  proofUrl           String   @default("")
+  note               String   @default("")
+  status             String   @default("PENDING")
+  reviewedByAdminId  String?
+  reviewedAt         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  driver  Driver  @relation(fields: [driverId], references: [id])
+
+  @@index([bookingId, status])
+  @@index([driverId, createdAt])
+  @@index([status, createdAt])
 }
 
 model DeliveryLifecycleEvent {

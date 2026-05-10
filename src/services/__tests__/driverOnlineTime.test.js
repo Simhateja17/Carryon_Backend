@@ -42,7 +42,21 @@ describe('Driver Online Time', () => {
         updateMany: jest.fn(),
       },
     };
-    const db = { $transaction: jest.fn((callback) => callback(tx)) };
+    const db = {
+      driver: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'driver-1',
+          isVerified: true,
+          verificationStatus: 'APPROVED',
+          documents: [
+            { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+            { type: 'ROAD_TAX', status: 'APPROVED', expiryDate: '2027-01-01' },
+            { type: 'INSURANCE', status: 'APPROVED', expiryDate: '2027-01-01' },
+          ],
+        }),
+      },
+      $transaction: jest.fn((callback) => callback(tx)),
+    };
     const now = new Date('2026-04-30T01:00:00.000Z');
 
     await setDriverOnlineStatus('driver-1', true, { db, now });

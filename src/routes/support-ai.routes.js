@@ -26,22 +26,27 @@ router.post('/ai-chat', authenticate, aiChatLimiter, async (req, res, next) => {
       return next(new AppError('Message is too long', 400));
     }
 
-    // Fetch user's recent bookings for context
+    // Fetch user's recent bookings for context — minimized for privacy
     const recentBookings = await prisma.booking.findMany({
       where: { userId: req.user.userId },
       take: 3,
       orderBy: { createdAt: 'desc' },
       select: {
-        id: true,
+        orderCode: true,
         status: true,
         vehicleType: true,
-        estimatedPrice: true,
         createdAt: true,
       },
     });
 
+    // Send only non-identifying display fields to AI
     const bookingContext = recentBookings.length > 0
-      ? JSON.stringify(recentBookings, null, 2)
+      ? JSON.stringify(recentBookings.map(b => ({
+          orderCode: b.orderCode || 'N/A',
+          status: b.status,
+          vehicleType: b.vehicleType,
+          createdAt: b.createdAt,
+        })), null, 2)
       : 'No recent bookings found.';
 
     const systemPrompt = `You are CarryOn's AI support assistant. CarryOn is a logistics and delivery platform in Malaysia that connects users with drivers for package delivery.

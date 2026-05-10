@@ -13,6 +13,15 @@ const {
   isSettlementEligible,
   creditDriverEarning,
 } = require('./bookingLifecycle');
+const { computePickupWaitCharge } = require('./bookingPolicy');
+const {
+  invoiceAmountsForBookingWithAdjustments,
+  upsertPickupWaitTimeAdjustmentTx,
+} = require('./bookingAdjustments');
+const {
+  creditDriverAdjustmentTx,
+  debitBookingAdjustmentTx,
+} = require('./walletLedger');
 const {
   generateDeliveryOtp,
   deliveryOtpWindow,
@@ -279,9 +288,13 @@ async function updateStatusCommand({ booking, actor, command, toStatus, location
   }
 
   const updated = await prisma.$transaction(async (tx) => {
+    const updateData = { status: toStatus };
+    if (toStatus === 'DRIVER_ARRIVED') {
+      updateData.driverArrivedAt = new Date();
+    }
     const changed = await tx.booking.update({
       where: { id: booking.id },
-      data: { status: toStatus },
+      data: updateData,
       include: bookingInclude,
     });
     await recordAudit(tx, {
@@ -531,10 +544,7 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
   try {
     const existingInvoice = await prisma.invoice.findUnique({ where: { bookingId: updated.id } });
     if (!existingInvoice) {
-      const price = updated.finalPrice || updated.estimatedPrice || 0;
-      const taxRate = 0.05;
-      const subtotal = Math.round((price / (1 + taxRate)) * 100) / 100;
-      const tax = Math.round((price - subtotal) * 100) / 100;
+      const { amounts } = await invoiceAmountsForBookingWithAdjustments(prisma, updated);
       const now2 = new Date();
       const invoiceNumber = `CO-${now2.getFullYear()}${String(now2.getMonth() + 1).padStart(2, '0')}${String(now2.getDate()).padStart(2, '0')}-${Math.floor(Math.random() * 9000 + 1000)}`;
       await prisma.invoice.create({
@@ -542,11 +552,11 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
           bookingId: updated.id,
           userId: updated.userId,
           invoiceNumber,
-          subtotal,
-          tax,
+          subtotal: amounts.subtotal,
+          tax: amounts.tax,
           discount: updated.discountAmount || 0,
-          total: price,
-          taxRate,
+          total: amounts.total,
+          taxRate: amounts.taxRate,
           currency: 'MYR',
         },
       });
@@ -565,7 +575,7 @@ async function cancelBeforePickup({ booking, actor, locationEvidence }) {
   const updated = await prisma.$transaction(async (tx) => {
     const changed = await tx.booking.update({
       where: { id: booking.id },
-      data: { status: 'SEARCHING_DRIVER', driverId: null },
+      data: { status: 'SEARCHING_DRIVER', driverId: null, driverAssignedAt: null, driverArrivedAt: null },
       include: bookingInclude,
     });
     await recordAudit(tx, {
@@ -655,19 +665,56 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
           throw lifecycleError('Invalid OTP', 400, 'PICKUP_OTP_INVALID');
         }
         resetOtpFailures(booking.id, actor.actorId, normalizedCommand);
+        const now = new Date();
+        const waitCharge = computePickupWaitCharge({
+          arrivedAt: booking.driverArrivedAt,
+          pickedUpAt: now,
+        });
         const updated = await prisma.$transaction(async (tx) => {
           const changed = await tx.booking.update({
             where: { id: booking.id },
-            data: { status: 'PICKUP_DONE', otp: '' },
+            data: {
+              status: 'PICKUP_DONE',
+              otp: '',
+              waitTimeMinutes: waitCharge.waitTimeMinutes,
+              waitTimeCharge: waitCharge.waitTimeCharge,
+            },
             include: bookingInclude,
           });
+          if (waitCharge.waitTimeCharge > 0) {
+            await upsertPickupWaitTimeAdjustmentTx(tx, {
+              bookingId: booking.id,
+              waitTimeMinutes: waitCharge.waitTimeMinutes,
+              waitTimeCharge: waitCharge.waitTimeCharge,
+            });
+            await debitBookingAdjustmentTx(
+              tx,
+              booking.userId,
+              booking.id,
+              waitCharge.waitTimeCharge,
+              'Pickup wait-time charge'
+            );
+            if (booking.driverId) {
+              await creditDriverAdjustmentTx(
+                tx,
+                booking.driverId,
+                booking.id,
+                waitCharge.waitTimeCharge,
+                'Pickup wait-time compensation'
+              );
+            }
+          }
           await recordAudit(tx, {
             actor: { actorId: actor.actorId, actorType: actor.actorType },
             action: 'BOOKING_STATUS_CHANGED',
             entityType: 'Booking',
             entityId: booking.id,
             oldValue: { status: booking.status },
-            newValue: { status: 'PICKUP_DONE' },
+            newValue: {
+              status: 'PICKUP_DONE',
+              waitTimeMinutes: waitCharge.waitTimeMinutes,
+              waitTimeCharge: waitCharge.waitTimeCharge,
+            },
           });
           await createLifecycleEvent(tx, {
             bookingId: booking.id,

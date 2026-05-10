@@ -56,14 +56,32 @@ async function uploadToSupabase(bucket, file, path, { upsert = true } = {}) {
     throw error;
   }
 
-  const { data } = getSupabaseAdmin().storage
+  // Store the object path, not a public URL
+  return `${bucket}/${path}`;
+}
+
+/**
+ * Generate a short-lived signed URL for viewing a stored object.
+ * @param {string} objectPath - "bucket/path/to/file" as returned by uploadToSupabase
+ * @param {number} expiresIn - seconds until URL expires (default 1 hour)
+ */
+async function getSignedUrl(objectPath, expiresIn = 3600) {
+  const slashIndex = objectPath.indexOf('/');
+  if (slashIndex === -1) throw new Error('Invalid object path');
+  const bucket = objectPath.substring(0, slashIndex);
+  const path = objectPath.substring(slashIndex + 1);
+
+  const { data, error } = await getSupabaseAdmin().storage
     .from(bucket)
-    .getPublicUrl(path);
-  return data.publicUrl;
+    .createSignedUrl(path, expiresIn);
+
+  if (error) throw error;
+  return data.signedUrl;
 }
 
 module.exports = {
   getSupabaseAdmin,
   validateSupabaseConnection,
   uploadToSupabase,
+  getSignedUrl,
 };
