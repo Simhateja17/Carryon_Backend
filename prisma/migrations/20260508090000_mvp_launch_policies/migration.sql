@@ -11,7 +11,7 @@ ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancellationPlatformShare" DOUBL
 ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "waitTimeMinutes" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "waitTimeCharge" DOUBLE PRECISION NOT NULL DEFAULT 0;
 
-CREATE TABLE "BookingExtraCharge" (
+CREATE TABLE IF NOT EXISTS "BookingExtraCharge" (
   "id" TEXT NOT NULL,
   "bookingId" TEXT NOT NULL,
   "driverId" TEXT NOT NULL,
@@ -28,14 +28,22 @@ CREATE TABLE "BookingExtraCharge" (
   CONSTRAINT "BookingExtraCharge_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "BookingExtraCharge_bookingId_status_idx" ON "BookingExtraCharge"("bookingId", "status");
-CREATE INDEX "BookingExtraCharge_driverId_createdAt_idx" ON "BookingExtraCharge"("driverId", "createdAt");
-CREATE INDEX "BookingExtraCharge_status_createdAt_idx" ON "BookingExtraCharge"("status", "createdAt");
+CREATE INDEX IF NOT EXISTS "BookingExtraCharge_bookingId_status_idx" ON "BookingExtraCharge"("bookingId", "status");
+CREATE INDEX IF NOT EXISTS "BookingExtraCharge_driverId_createdAt_idx" ON "BookingExtraCharge"("driverId", "createdAt");
+CREATE INDEX IF NOT EXISTS "BookingExtraCharge_status_createdAt_idx" ON "BookingExtraCharge"("status", "createdAt");
 
-ALTER TABLE "BookingExtraCharge"
-ADD CONSTRAINT "BookingExtraCharge_bookingId_fkey"
-FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'BookingExtraCharge_bookingId_fkey') THEN
+    ALTER TABLE "BookingExtraCharge"
+    ADD CONSTRAINT "BookingExtraCharge_bookingId_fkey"
+    FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-ALTER TABLE "BookingExtraCharge"
-ADD CONSTRAINT "BookingExtraCharge_driverId_fkey"
-FOREIGN KEY ("driverId") REFERENCES "Driver"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'BookingExtraCharge_driverId_fkey') THEN
+    ALTER TABLE "BookingExtraCharge"
+    ADD CONSTRAINT "BookingExtraCharge_driverId_fkey"
+    FOREIGN KEY ("driverId") REFERENCES "Driver"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
