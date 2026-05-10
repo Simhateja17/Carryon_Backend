@@ -11,7 +11,7 @@ function isInvalidTokenError(error) {
 }
 
 // Initialize Firebase Admin SDK
-// Supports  both:
+// Supports both:
 // 1. GOOGLE_APPLICATION_CREDENTIALS env var (path to service-account.json)
 // 2. FIREBASE_SERVICE_ACCOUNT env var (JSON string of service account)
 // 3. service-account.json file in project root
