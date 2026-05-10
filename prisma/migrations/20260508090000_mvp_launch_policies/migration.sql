@@ -1,17 +1,18 @@
 -- MVP launch policy fields: assignment timing, cancellation fees, wait charges,
 -- and approved driver-submitted extra charges.
 
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "driverAssignedAt" TIMESTAMP(3);
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "driverArrivedAt" TIMESTAMP(3);
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancelledBy" TEXT;
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancelReason" TEXT NOT NULL DEFAULT '';
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancellationFee" DOUBLE PRECISION NOT NULL DEFAULT 0;
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancellationDriverShare" DOUBLE PRECISION NOT NULL DEFAULT 0;
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "cancellationPlatformShare" DOUBLE PRECISION NOT NULL DEFAULT 0;
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "waitTimeMinutes" INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "waitTimeCharge" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "Booking"
+ADD COLUMN "driverAssignedAt" TIMESTAMP(3),
+ADD COLUMN "driverArrivedAt" TIMESTAMP(3),
+ADD COLUMN "cancelledBy" TEXT,
+ADD COLUMN "cancelReason" TEXT NOT NULL DEFAULT '',
+ADD COLUMN "cancellationFee" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN "cancellationDriverShare" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN "cancellationPlatformShare" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN "waitTimeMinutes" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "waitTimeCharge" DOUBLE PRECISION NOT NULL DEFAULT 0;
 
-CREATE TABLE IF NOT EXISTS "BookingExtraCharge" (
+CREATE TABLE "BookingExtraCharge" (
   "id" TEXT NOT NULL,
   "bookingId" TEXT NOT NULL,
   "driverId" TEXT NOT NULL,
@@ -28,22 +29,14 @@ CREATE TABLE IF NOT EXISTS "BookingExtraCharge" (
   CONSTRAINT "BookingExtraCharge_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX IF NOT EXISTS "BookingExtraCharge_bookingId_status_idx" ON "BookingExtraCharge"("bookingId", "status");
-CREATE INDEX IF NOT EXISTS "BookingExtraCharge_driverId_createdAt_idx" ON "BookingExtraCharge"("driverId", "createdAt");
-CREATE INDEX IF NOT EXISTS "BookingExtraCharge_status_createdAt_idx" ON "BookingExtraCharge"("status", "createdAt");
+CREATE INDEX "BookingExtraCharge_bookingId_status_idx" ON "BookingExtraCharge"("bookingId", "status");
+CREATE INDEX "BookingExtraCharge_driverId_createdAt_idx" ON "BookingExtraCharge"("driverId", "createdAt");
+CREATE INDEX "BookingExtraCharge_status_createdAt_idx" ON "BookingExtraCharge"("status", "createdAt");
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'BookingExtraCharge_bookingId_fkey') THEN
-    ALTER TABLE "BookingExtraCharge"
-    ADD CONSTRAINT "BookingExtraCharge_bookingId_fkey"
-    FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-END $$;
+ALTER TABLE "BookingExtraCharge"
+ADD CONSTRAINT "BookingExtraCharge_bookingId_fkey"
+FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'BookingExtraCharge_driverId_fkey') THEN
-    ALTER TABLE "BookingExtraCharge"
-    ADD CONSTRAINT "BookingExtraCharge_driverId_fkey"
-    FOREIGN KEY ("driverId") REFERENCES "Driver"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-  END IF;
-END $$;
+ALTER TABLE "BookingExtraCharge"
+ADD CONSTRAINT "BookingExtraCharge_driverId_fkey"
+FOREIGN KEY ("driverId") REFERENCES "Driver"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
