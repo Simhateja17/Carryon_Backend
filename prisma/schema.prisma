@@ -627,6 +627,13 @@ model AuditLog {
   @@index([action, createdAt])
 }
 
+model AdminSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
 model WebhookEvent {
   id              String             @id @default(uuid())
   provider        String
