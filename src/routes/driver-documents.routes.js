@@ -5,6 +5,7 @@ const { authenticateDriver, requireDriver } = require('../middleware/driverAuth'
 const { AppError } = require('../middleware/errorHandler');
 const { uploadToSupabase } = require('../lib/supabase');
 const { validateImageMagicBytes } = require('../lib/imageValidation');
+const { isDriverDocumentPathForDriver } = require('../lib/driverDocumentPaths');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -72,10 +73,10 @@ router.post('/', upload.single('image'), async (req, res, next) => {
         return next(new AppError('Public URLs are not accepted. Submit the storage object path only.', 400));
       }
 
-      // Validate object path belongs to this driver — canonical format:
-      // driver-documents/<driverId>/<documentType>_<timestamp>.<ext>
-      const allowedPrefix = `driver-documents/${req.driver.id}/`;
-      if (!rawPath.startsWith(allowedPrefix)) {
+      // Validate object path belongs to this driver.
+      // Canonical format: driver-documents/<driverId>/<documentType>_<timestamp>.<ext>
+      // Legacy app builds may send: driver-documents/drivers/<driverId>/<documentType>_<timestamp>.<ext>
+      if (!isDriverDocumentPathForDriver(rawPath, req.driver.id)) {
         return next(new AppError('Document path must belong to your driver storage', 403));
       }
       imageUrl = rawPath;
