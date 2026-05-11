@@ -120,7 +120,7 @@ router.put('/:id/documents/:docId/review', async (req, res, next) => {
         },
       });
       await recordAudit(tx, {
-        actor: { actorId: 'admin', actorType: 'ADMIN' },
+        actor: req.adminActor,
         action: 'DRIVER_DOCUMENT_REVIEWED',
         entityType: 'DriverDocument',
         entityId: req.params.docId,
@@ -167,7 +167,7 @@ router.put('/:id/verify', async (req, res, next) => {
         include: { documents: true, vehicle: true },
       });
       await recordAudit(tx, {
-        actor: { actorId: 'admin', actorType: 'ADMIN' },
+        actor: req.adminActor,
         action: 'DRIVER_VERIFICATION_CHANGED',
         entityType: 'Driver',
         entityId: req.params.id,

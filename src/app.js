@@ -136,6 +136,7 @@ mountVersionedRoute(app, '/admin/notifications', require('./routes/admin-notific
 mountVersionedRoute(app, '/admin/drivers', require('./routes/admin-drivers.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/extra-charges', require('./routes/admin-extra-charges.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/command-center', require('./routes/admin-command-center.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/maps', require('./routes/admin-maps.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/pricing', require('./routes/admin-pricing.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/settings', require('./routes/admin-settings.routes'), adminAuth);
 console.log('[app] All routes mounted');

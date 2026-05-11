@@ -1,25 +1,13 @@
 const { Router } = require('express');
-const { randomInt } = require('crypto');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { COMPANY_INVOICE_PROFILE } = require('../services/businessConfig');
-const {
-  findAppliedBookingAdjustments,
-  invoiceAmountsForBookingWithAdjustments,
-} = require('../services/bookingAdjustments');
+const { findAppliedBookingAdjustments } = require('../services/bookingAdjustments');
+const { getOrCreateInvoiceForBooking } = require('../services/invoices');
 
 const router = Router();
 router.use(authenticate);
-
-function generateInvoiceNumber() {
-  const date = new Date();
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const rand = randomInt(1000, 10000);
-  return `CO-${y}${m}${d}-${rand}`;
-}
 
 // POST /api/invoices/:bookingId - Generate invoice for a booking
 router.post('/:bookingId', async (req, res, next) => {
@@ -32,29 +20,11 @@ router.post('/:bookingId', async (req, res, next) => {
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.userId !== req.user.userId) return next(new AppError('Not authorized', 403));
 
-    // Return existing invoice if already generated
-    if (booking.invoice) {
-      return res.json({ success: true, data: booking.invoice });
-    }
+    const hadInvoice = !!booking.invoice;
+    const invoice = await getOrCreateInvoiceForBooking(prisma, booking);
+    console.log('[invoice] Generated — invoiceId:', invoice.id, 'invoiceNumber:', invoice.invoiceNumber, 'bookingId:', req.params.bookingId, 'total:', invoice.total);
 
-    const { amounts } = await invoiceAmountsForBookingWithAdjustments(prisma, booking);
-
-    const invoice = await prisma.invoice.create({
-      data: {
-        bookingId: req.params.bookingId,
-        userId: req.user.userId,
-        invoiceNumber: generateInvoiceNumber(),
-        subtotal: amounts.subtotal,
-        tax: amounts.tax,
-        discount: booking.discountAmount || 0,
-        total: amounts.total,
-        taxRate: amounts.taxRate,
-        currency: 'MYR',
-      },
-    });
-    console.log('[invoice] Generated — invoiceId:', invoice.id, 'invoiceNumber:', invoice.invoiceNumber, 'bookingId:', req.params.bookingId, 'total:', amounts.total);
-
-    res.status(201).json({ success: true, data: invoice });
+    res.status(hadInvoice ? 200 : 201).json({ success: true, data: invoice });
   } catch (err) {
     next(err);
   }

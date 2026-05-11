@@ -15,9 +15,9 @@ const {
 } = require('./bookingLifecycle');
 const { computePickupWaitCharge } = require('./bookingPolicy');
 const {
-  invoiceAmountsForBookingWithAdjustments,
   upsertPickupWaitTimeAdjustmentTx,
 } = require('./bookingAdjustments');
+const { getOrCreateInvoiceForBooking } = require('./invoices');
 const {
   creditDriverAdjustmentTx,
   debitBookingAdjustmentTx,
@@ -542,25 +542,7 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
 
   // Auto-generate invoice for completed delivery (non-fatal)
   try {
-    const existingInvoice = await prisma.invoice.findUnique({ where: { bookingId: updated.id } });
-    if (!existingInvoice) {
-      const { amounts } = await invoiceAmountsForBookingWithAdjustments(prisma, updated);
-      const now2 = new Date();
-      const invoiceNumber = `CO-${now2.getFullYear()}${String(now2.getMonth() + 1).padStart(2, '0')}${String(now2.getDate()).padStart(2, '0')}-${Math.floor(Math.random() * 9000 + 1000)}`;
-      await prisma.invoice.create({
-        data: {
-          bookingId: updated.id,
-          userId: updated.userId,
-          invoiceNumber,
-          subtotal: amounts.subtotal,
-          tax: amounts.tax,
-          discount: updated.discountAmount || 0,
-          total: amounts.total,
-          taxRate: amounts.taxRate,
-          currency: 'MYR',
-        },
-      });
-    }
+    await getOrCreateInvoiceForBooking(prisma, updated);
   } catch (invoiceErr) {
     console.error('[invoice] Auto-generation failed for booking', updated.id, invoiceErr.message);
   }

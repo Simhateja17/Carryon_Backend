@@ -3,7 +3,7 @@ const { authenticate, authenticateToken } = require('../middleware/auth');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const prisma = require('../lib/prisma');
 const location = require('../services/locationProvider');
-const { ACTIVE_TRACKING_STATUSES, broadcastDriverLocation } = require('../services/liveTracking');
+const { updateDriverPosition } = require('../services/driverLocation');
 
 const router = express.Router();
 
@@ -81,31 +81,8 @@ router.get('/map-config', authenticateToken, async (req, res) => {
 // POST /api/location/update-position
 router.post('/update-position', authenticateDriver, requireDriver, async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
-    const lat = Number(latitude);
-    const lng = Number(longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      return res.status(400).json({ success: false, message: 'Valid latitude and longitude are required' });
-    }
-
-    await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { currentLatitude: lat, currentLongitude: lng },
-    });
-
-    const activeBookings = await prisma.booking.findMany({
-      where: {
-        driverId: req.driver.id,
-        status: { in: ACTIVE_TRACKING_STATUSES },
-      },
-      select: { id: true },
-    });
-    const timestamp = new Date().toISOString();
-    activeBookings.forEach((booking) => {
-      broadcastDriverLocation(booking.id, { latitude: lat, longitude: lng, timestamp });
-    });
-
-    res.json({ success: true, message: 'Position updated', data: { activeBookings: activeBookings.length } });
+    const data = await updateDriverPosition(req.driver.id, req.body);
+    res.json({ success: true, message: 'Position updated', data: { activeBookings: data.activeBookings } });
   } catch (err) {
     next(err);
   }

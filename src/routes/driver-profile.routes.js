@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { setDriverOnlineStatus } = require('../services/driverOnlineTime');
+const { updateDriverPosition } = require('../services/driverLocation');
 const {
   parsePushRegistrationBody,
   upsertPushDevice,
@@ -72,16 +73,9 @@ router.post('/toggle-online', async (req, res, next) => {
 // POST /api/driver/profile/location
 router.post('/location', async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
-    if (latitude == null || longitude == null) {
-      return next(new AppError('latitude and longitude are required', 400));
-    }
-    console.log('[driver-profile] POST location — driverId:', req.driver.id, 'lat:', latitude, 'lng:', longitude);
-    await prisma.driver.update({
-      where: { id: req.driver.id },
-      data: { currentLatitude: latitude, currentLongitude: longitude },
-    });
-    res.json({ success: true });
+    const data = await updateDriverPosition(req.driver.id, req.body);
+    console.log('[driver-profile] POST location — driverId:', req.driver.id, 'active bookings:', data.activeBookings);
+    res.json({ success: true, data: { activeBookings: data.activeBookings } });
   } catch (err) {
     next(err);
   }

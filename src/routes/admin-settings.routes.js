@@ -77,7 +77,7 @@ router.put('/notifications', async (req, res, next) => {
     const saved = await prisma.$transaction(async (tx) => {
       const setting = await setAdminSettingTx(tx, NOTIFICATION_SETTINGS_KEY, nextSettings);
       await recordAudit(tx, {
-        actor: { actorId: 'ADMIN', actorType: 'ADMIN' },
+        actor: req.adminActor,
         action: 'ADMIN_NOTIFICATION_SETTINGS_UPDATED',
         entityType: 'AdminSetting',
         entityId: NOTIFICATION_SETTINGS_KEY,

@@ -529,6 +529,7 @@ model Booking {
   lifecycleEvents   DeliveryLifecycleEvent[]
   extraCharges      BookingExtraCharge[]
   adjustments        BookingAdjustment[]
+  plannedRouteSnapshots PlannedRouteSnapshot[]
 }
 
 model BookingAdjustment {
@@ -595,6 +596,25 @@ model DeliveryLifecycleEvent {
   @@index([actorType, actorId, createdAt])
   @@index([command, createdAt])
   @@index([success, createdAt])
+}
+
+model PlannedRouteSnapshot {
+  id             String   @id @default(uuid())
+  bookingId      String
+  provider       String   @default("google")
+  routeHash      String
+  distanceMeters Int      @default(0)
+  durationSeconds Int     @default(0)
+  geometry       Json
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@unique([bookingId, routeHash])
+  @@index([bookingId, expiresAt])
+  @@index([expiresAt])
 }
 
 model IdempotencyKey {
@@ -821,7 +841,7 @@ model Invoice {
   tax           Float    @default(0)
   discount      Float    @default(0)
   total         Float    @default(0)
-  taxRate       Float    @default(0.06)
+  taxRate       Float    @default(0.05)
   currency      String   @default("MYR")
   issuedAt      DateTime @default(now())
 

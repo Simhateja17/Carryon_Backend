@@ -101,7 +101,7 @@ router.post('/:id/review', async (req, res, next) => {
       }
 
       await recordAudit(tx, {
-        actor: { actorId: 'ADMIN', actorType: 'ADMIN' },
+        actor: req.adminActor,
         action: 'BOOKING_EXTRA_CHARGE_REVIEWED',
         entityType: 'BookingExtraCharge',
         entityId: charge.id,

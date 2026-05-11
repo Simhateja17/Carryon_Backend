@@ -157,7 +157,7 @@ router.put('/vehicles', async (req, res, next) => {
         }
       }
       await recordAudit(tx, {
-        actor: { actorId: 'ADMIN', actorType: 'ADMIN' },
+        actor: req.adminActor,
         action: 'ADMIN_PRICING_UPDATED',
         entityType: 'Vehicle',
         entityId: 'pricing',

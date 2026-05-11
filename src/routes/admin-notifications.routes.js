@@ -172,7 +172,7 @@ router.post('/ride-request', async (req, res, next) => {
             },
           });
           await recordAudit(tx, {
-            actor: { actorId: 'admin', actorType: 'ADMIN' },
+            actor: req.adminActor,
             action: 'ADMIN_BOOKING_CREATED',
             entityType: 'Booking',
             entityId: created.id,

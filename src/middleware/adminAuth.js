@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { AppError } = require('./errorHandler');
+const { verifyAdminAssertion } = require('../services/adminTrust');
 
 /**
  * Admin authentication middleware.
@@ -27,6 +28,21 @@ function adminAuth(req, res, next) {
     return next(new AppError('Unauthorized: invalid or missing admin key', 401));
   }
 
+  if (req.headers['x-admin-proxy'] === 'admin-panel') {
+    const assertion = verifyAdminAssertion(req);
+    if (!assertion.ok) {
+      return next(new AppError('Unauthorized: invalid admin assertion', 401));
+    }
+    req.adminActor = assertion.actor;
+    return next();
+  }
+
+  req.adminActor = {
+    actorId: 'admin-key',
+    actorType: 'ADMIN',
+    actorEmail: null,
+    requestId: null,
+  };
   next();
 }
 
