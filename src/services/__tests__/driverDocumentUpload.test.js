@@ -1,4 +1,7 @@
-const { uploadDriverDocument } = require('../driverDocumentUpload');
+const {
+  fileLooksLikeSupportedDriverDocument,
+  uploadDriverDocument,
+} = require('../driverDocumentUpload');
 
 const jpegFile = {
   mimetype: 'image/jpeg',
@@ -71,6 +74,51 @@ describe('driver document upload service', () => {
       message: 'File is not a valid image',
       statusCode: 400,
     });
+  });
+
+  test('stores using the detected MIME type instead of client-supplied metadata', async () => {
+    const upload = jest.fn().mockResolvedValue('driver-documents/driver-1/MYKAD_BACK_456.heic');
+    const documents = {
+      upsert: jest.fn().mockResolvedValue({
+        id: 'doc-2',
+        driverId: 'driver-1',
+        type: 'MYKAD_BACK',
+        imageUrl: 'driver-documents/driver-1/MYKAD_BACK_456.heic',
+        status: 'PENDING',
+      }),
+    };
+    const heicBytes = Buffer.from([
+      0x00, 0x00, 0x00, 0x18,
+      0x66, 0x74, 0x79, 0x70,
+      0x68, 0x65, 0x69, 0x63,
+    ]);
+
+    await uploadDriverDocument({
+      driverId: 'driver-1',
+      file: { mimetype: 'image/jpeg', buffer: heicBytes, originalname: 'mykad.jpg' },
+      type: 'MYKAD_BACK',
+      upload,
+      documents,
+      now: () => 456,
+    });
+
+    expect(upload).toHaveBeenCalledWith(
+      'driver-documents',
+      expect.objectContaining({ mimetype: 'image/heic' }),
+      'driver-1/MYKAD_BACK_456.heic',
+      { upsert: true }
+    );
+  });
+
+  test('accepts supported image extensions when mobile MIME metadata is generic', () => {
+    expect(fileLooksLikeSupportedDriverDocument({
+      mimetype: 'application/octet-stream',
+      originalname: 'mykad-back.HEIC',
+    })).toBe(true);
+    expect(fileLooksLikeSupportedDriverDocument({
+      mimetype: 'application/octet-stream',
+      originalname: 'payload.txt',
+    })).toBe(false);
   });
 
   test('converts storage failures into sanitized upload errors', async () => {

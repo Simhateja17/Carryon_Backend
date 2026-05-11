@@ -6,7 +6,11 @@ const { AppError } = require('../middleware/errorHandler');
 const { uploadToSupabase } = require('../lib/supabase');
 const { validateImageMagicBytes } = require('../lib/imageValidation');
 const { isDriverDocumentPathForDriver } = require('../lib/driverDocumentPaths');
-const { VALID_DOCUMENT_TYPES, uploadDriverDocument } = require('../services/driverDocumentUpload');
+const {
+  VALID_DOCUMENT_TYPES,
+  fileLooksLikeSupportedDriverDocument,
+  uploadDriverDocument,
+} = require('../services/driverDocumentUpload');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -15,7 +19,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    if (fileLooksLikeSupportedDriverDocument(file)) {
       cb(null, true);
     } else {
       cb(new AppError('Only image files are allowed', 400), false);
@@ -23,11 +27,21 @@ const upload = multer({
   },
 });
 
+function parseDocumentUpload(req, res, next) {
+  upload.single('image')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return next(new AppError('Image must be 10MB or smaller', 400));
+    }
+    return next(err);
+  });
+}
+
 // POST /api/driver/documents — upload a document
 // Supports two modes:
 // 1. Multipart form upload (image file + type) - backend uploads to Supabase
 // 2. JSON body with imageUrl + type - image already uploaded to Supabase from mobile app
-router.post('/', upload.single('image'), async (req, res, next) => {
+router.post('/', parseDocumentUpload, async (req, res, next) => {
   try {
     let imageUrl;
     let type;
@@ -109,7 +123,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // PUT /api/driver/documents/:id — re-upload a rejected document
-router.put('/:id', upload.single('image'), async (req, res, next) => {
+router.put('/:id', parseDocumentUpload, async (req, res, next) => {
   try {
     const doc = await prisma.driverDocument.findUnique({ where: { id: req.params.id } });
     if (!doc) return next(new AppError('Document not found', 404));
@@ -121,10 +135,11 @@ router.put('/:id', upload.single('image'), async (req, res, next) => {
 
     const ext = detected.ext;
     const fileName = `${req.driver.id}/${doc.type}_${Date.now()}.${ext}`;
+    const storageFile = { ...req.file, mimetype: detected.type };
 
     let publicUrl;
     try {
-      publicUrl = await uploadToSupabase('driver-documents', req.file, fileName, { upsert: true });
+      publicUrl = await uploadToSupabase('driver-documents', storageFile, fileName, { upsert: true });
     } catch (_error) {
       return next(new AppError('Failed to upload document', 500));
     }

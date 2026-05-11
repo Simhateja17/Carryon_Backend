@@ -28,9 +28,25 @@ const VALID_DOCUMENT_TYPES = new Set([
   'WORK_PERMIT_PLKS',
 ]);
 
+const VALID_DRIVER_DOCUMENT_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+]);
+
 function assertValidDocumentType(type) {
   if (!type) throw new AppError('Document type is required', 400);
   if (!VALID_DOCUMENT_TYPES.has(type)) throw new AppError('Invalid document type', 400);
+}
+
+function fileLooksLikeSupportedDriverDocument(file) {
+  if (!file) return false;
+  if (VALID_DRIVER_DOCUMENT_IMAGE_TYPES.has(file.mimetype)) return true;
+
+  const ext = String(file.originalname || '').split('.').pop()?.toLowerCase();
+  return ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
 }
 
 function sanitizeStorageError(error) {
@@ -60,13 +76,15 @@ async function uploadDriverDocument({
   if (!detected) throw new AppError('File is not a valid image', 400);
 
   const fileName = `${driverId}/${type}_${now()}.${detected.ext}`;
+  const storageFile = { ...file, mimetype: detected.type };
   let imageUrl;
   try {
-    imageUrl = await upload('driver-documents', file, fileName, { upsert: true });
+    imageUrl = await upload('driver-documents', storageFile, fileName, { upsert: true });
   } catch (error) {
     console.error('[driver-documents] storage upload failed', JSON.stringify({
       driverId,
       type,
+      detectedType: detected.type,
       storage: sanitizeStorageError(error),
     }));
     throw new AppError('Failed to upload document', 500);
@@ -91,6 +109,8 @@ async function uploadDriverDocument({
 
 module.exports = {
   VALID_DOCUMENT_TYPES,
+  VALID_DRIVER_DOCUMENT_IMAGE_TYPES,
   assertValidDocumentType,
+  fileLooksLikeSupportedDriverDocument,
   uploadDriverDocument,
 };
