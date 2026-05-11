@@ -70,6 +70,9 @@ function driverListProjection(driver) {
     isOnline: driver.isOnline,
     isVerified: driver.isVerified,
     verificationStatus: driver.verificationStatus,
+    verificationRejectionReason: driver.verificationRejectionReason,
+    verificationReviewedAt: driver.verificationReviewedAt,
+    verificationReviewedByAdminId: driver.verificationReviewedByAdminId,
     rating: driver.rating,
     totalTrips: driver.totalTrips,
     emergencyContact: driver.emergencyContact,
@@ -90,7 +93,7 @@ function driverListProjection(driver) {
 async function signDriverDocuments(driver, { sign = getSignedUrl } = {}) {
   if (!driver.documents) return driver;
   for (const doc of driver.documents) {
-    if (doc.imageUrl && !doc.imageUrl.startsWith('http')) {
+    if (doc.imageUrl) {
       try {
         doc.imageUrl = await sign(doc.imageUrl, 3600);
       } catch (_) {
@@ -114,6 +117,9 @@ function detailProjection(driver) {
     isOnline: driver.isOnline,
     isVerified: driver.isVerified,
     verificationStatus: driver.verificationStatus,
+    verificationRejectionReason: driver.verificationRejectionReason,
+    verificationReviewedAt: driver.verificationReviewedAt,
+    verificationReviewedByAdminId: driver.verificationReviewedByAdminId,
     emergencyContact: driver.emergencyContact,
     createdAt: driver.createdAt,
     onboardingSubmittedAt: driver.onboardingSubmittedAt,

@@ -65,11 +65,36 @@ async function uploadToSupabase(bucket, file, path, { upsert = true } = {}) {
  * @param {string} objectPath - "bucket/path/to/file" as returned by uploadToSupabase
  * @param {number} expiresIn - seconds until URL expires (default 1 hour)
  */
-async function getSignedUrl(objectPath, expiresIn = 3600) {
+function parseStorageObjectRef(objectRef) {
+  const raw = String(objectRef || '').trim();
+  if (!raw) throw new Error('Invalid object path');
+
+  let objectPath = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    let url;
+    try {
+      url = new URL(raw);
+    } catch (_) {
+      throw new Error('Invalid object URL');
+    }
+
+    const match = url.pathname.match(/^\/storage\/v1\/object\/(?:public|sign)\/([^/]+)\/(.+)$/);
+    if (!match) {
+      throw new Error('Unsupported storage object URL');
+    }
+    objectPath = `${decodeURIComponent(match[1])}/${decodeURIComponent(match[2])}`;
+  }
+
   const slashIndex = objectPath.indexOf('/');
   if (slashIndex === -1) throw new Error('Invalid object path');
-  const bucket = objectPath.substring(0, slashIndex);
-  const path = objectPath.substring(slashIndex + 1);
+  return {
+    bucket: objectPath.substring(0, slashIndex),
+    path: objectPath.substring(slashIndex + 1),
+  };
+}
+
+async function getSignedUrl(objectPath, expiresIn = 3600) {
+  const { bucket, path } = parseStorageObjectRef(objectPath);
 
   const { data, error } = await getSupabaseAdmin().storage
     .from(bucket)
@@ -84,4 +109,5 @@ module.exports = {
   validateSupabaseConnection,
   uploadToSupabase,
   getSignedUrl,
+  parseStorageObjectRef,
 };

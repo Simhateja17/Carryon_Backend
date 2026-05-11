@@ -317,6 +317,9 @@ model Driver {
   agreementVersion   String                   @default("")
   noOffencesDeclared Boolean                  @default(false)
   onboardingSubmittedAt DateTime?
+  verificationRejectionReason String?
+  verificationReviewedAt DateTime?
+  verificationReviewedByAdminId String?
   photo              String?
   rating             Float                    @default(0)
   totalTrips         Int                      @default(0)

@@ -11,6 +11,9 @@ const {
   listDriverReviewCandidates,
   signDriverDocuments,
 } = require('../services/adminDriverReview');
+const {
+  updateDriverVerificationDecision,
+} = require('../services/adminDriverVerification');
 
 const router = Router();
 
@@ -155,42 +158,12 @@ router.put('/:id/documents/:docId/review', async (req, res, next) => {
 // PUT /api/admin/drivers/:id/verify — update driver verification status
 router.put('/:id/verify', async (req, res, next) => {
   try {
-    const { verificationStatus } = req.body;
-    console.log('[admin-drivers] PUT verify — driverId:', req.params.id, 'verificationStatus:', verificationStatus);
-    const validStatuses = ['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED'];
-
-    if (!verificationStatus || !validStatuses.includes(verificationStatus)) {
-      return next(
-        new AppError(`verificationStatus must be one of: ${validStatuses.join(', ')}`, 400)
-      );
-    }
-
-    const driver = await prisma.driver.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!driver) {
-      return next(new AppError('Driver not found', 404));
-    }
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const changed = await tx.driver.update({
-        where: { id: req.params.id },
-        data: {
-          verificationStatus,
-          isVerified: verificationStatus === 'APPROVED',
-        },
-        include: { documents: true, vehicle: true },
-      });
-      await recordAudit(tx, {
-        actor: req.adminActor,
-        action: 'DRIVER_VERIFICATION_CHANGED',
-        entityType: 'Driver',
-        entityId: req.params.id,
-        oldValue: { verificationStatus: driver.verificationStatus, isVerified: driver.isVerified },
-        newValue: { verificationStatus, isVerified: verificationStatus === 'APPROVED' },
-      });
-      return changed;
+    console.log('[admin-drivers] PUT verify — driverId:', req.params.id, 'verificationStatus:', req.body?.verificationStatus);
+    const updated = await updateDriverVerificationDecision({
+      db: prisma,
+      driverId: req.params.id,
+      body: req.body,
+      actor: req.adminActor,
     });
     console.log('[admin-drivers] verify — driverId:', req.params.id, 'verificationStatus →', updated.verificationStatus, 'isVerified:', updated.isVerified);
 

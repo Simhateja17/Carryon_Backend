@@ -4,6 +4,7 @@ const {
   listDriverReviewCandidates,
   reviewCandidateOrderBy,
   reviewCandidateWhere,
+  signDriverDocuments,
 } = require('../adminDriverReview');
 
 function driver(overrides = {}) {
@@ -80,5 +81,25 @@ describe('admin driver review read model', () => {
     });
     expect(projected).not.toHaveProperty('mykadNumber');
     expect(projected).not.toHaveProperty('bankAccountNumber');
+  });
+
+  test('signs every document image reference before admin display', async () => {
+    const imageUrl = 'https://liwhjhkqlwufnbekegas.supabase.co/storage/v1/object/public/driver-documents/drivers/auth-user-1/SELFIE.jpg';
+    const record = driver({
+      documents: [
+        {
+          id: 'doc-1',
+          type: 'SELFIE',
+          status: 'PENDING',
+          imageUrl,
+        },
+      ],
+    });
+    const sign = jest.fn().mockResolvedValue('https://signed.example/doc-1');
+
+    await signDriverDocuments(record, { sign });
+
+    expect(sign).toHaveBeenCalledWith(imageUrl, 3600);
+    expect(record.documents[0].imageUrl).toBe('https://signed.example/doc-1');
   });
 });
