@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { submitDriverOnboarding } = require('../services/driverOnboarding');
+const { serializeDriver } = require('../lib/driverResponse');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -11,7 +12,7 @@ router.put('/', async (req, res, next) => {
     const driver = await submitDriverOnboarding(req.driver.id, req.body, {
       actor: { actorId: req.driver.id, actorType: 'DRIVER' },
     });
-    res.json({ success: true, data: driver });
+    res.json({ success: true, data: serializeDriver(driver) });
   } catch (err) {
     next(err);
   }

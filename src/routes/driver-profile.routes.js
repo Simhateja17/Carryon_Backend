@@ -10,6 +10,7 @@ const {
   removePushDevice,
 } = require('../lib/pushDevices');
 const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
+const { serializeDriver } = require('../lib/driverResponse');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -21,7 +22,7 @@ router.get('/', async (req, res, next) => {
       where: { id: req.driver.id },
       include: { documents: true, vehicle: true },
     });
-    res.json({ success: true, data: driver });
+    res.json({ success: true, data: serializeDriver(driver) });
   } catch (err) {
     next(err);
   }
@@ -48,7 +49,7 @@ router.put('/', async (req, res, next) => {
       },
       include: { documents: true, vehicle: true },
     });
-    res.json({ success: true, data: driver });
+    res.json({ success: true, data: serializeDriver(driver) });
   } catch (err) {
     next(err);
   }
