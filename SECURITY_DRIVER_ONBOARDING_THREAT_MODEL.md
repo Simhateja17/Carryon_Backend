@@ -7,6 +7,7 @@ This covers the final driver onboarding submission path and the admin review sur
 - Driver app submits 13-step onboarding data through `PUT /api/driver/onboarding`.
 - Admin panel reads pending submissions through `/api/admin/drivers/onboarding-queue`.
 - Admin panel reviews driver detail, documents, verification status, and masked PII.
+- Legacy unverified drivers without an aggregate submission timestamp are still review candidates.
 
 ## Assets
 
@@ -33,9 +34,11 @@ This covers the final driver onboarding submission path and the admin review sur
 | Admin reveals PII without accountability | `POST /api/admin/drivers/:id/pii/reveal` requires a field and reason, returns one field only, and records `DRIVER_PII_REVEALED`. |
 | Broad admin proxy route permits unsafe mutations | Admin proxy has explicit schema validation for document review, verification, and PII reveal payloads. |
 | Document previews expose permanent URLs | Admin detail signs private object paths with short-lived Supabase signed URLs. |
+| Review queue hides legacy unverified drivers | The admin review module selects by reviewable verification status, not only by aggregate submission timestamp. |
 
 ## Verification
 
 - `src/services/__tests__/driverOnboarding.test.js` covers aggregate validation, document path rejection, transaction writes, snapshot creation, and audit creation.
+- `src/services/__tests__/adminDriverReview.test.js` covers legacy unverified review candidates and default PII masking.
 - Existing admin auth tests cover the signed admin assertion path.
 - Backend full test suite passes after adding the onboarding service tests.

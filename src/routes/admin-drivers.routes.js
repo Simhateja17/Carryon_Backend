@@ -2,146 +2,24 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('../services/auditLog');
-const { getSignedUrl } = require('../lib/supabase');
+const {
+  DRIVER_DETAIL_INCLUDE,
+  DRIVER_REVIEW_INCLUDE,
+  PII_FIELDS,
+  detailProjection,
+  driverListProjection,
+  listDriverReviewCandidates,
+  signDriverDocuments,
+} = require('../services/adminDriverReview');
 
 const router = Router();
-
-const PII_FIELDS = new Set([
-  'mykadNumber',
-  'passportNumber',
-  'plksNumber',
-  'driversLicenseNumber',
-  'bankAccountNumber',
-  'duitNowId',
-  'tngEwalletId',
-  'lhdnTaxNumber',
-  'sstNumber',
-]);
-
-function maskSensitive(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  if (raw.length <= 4) return '*'.repeat(raw.length);
-  return `${'*'.repeat(Math.max(4, raw.length - 4))}${raw.slice(-4)}`;
-}
-
-function maskedField(value) {
-  return {
-    masked: maskSensitive(value),
-    hasValue: !!String(value || '').trim(),
-  };
-}
-
-function driverListProjection(d) {
-  return {
-    id: d.id,
-    name: d.name,
-    email: d.email,
-    phone: d.phone,
-    photo: d.photo,
-    isOnline: d.isOnline,
-    isVerified: d.isVerified,
-    verificationStatus: d.verificationStatus,
-    rating: d.rating,
-    totalTrips: d.totalTrips,
-    emergencyContact: d.emergencyContact,
-    createdAt: d.createdAt,
-    onboardingSubmittedAt: d.onboardingSubmittedAt,
-    documentsCount: d.documents.length,
-    documentsApproved: d.documents.filter((doc) => doc.status === 'APPROVED').length,
-    documentsPending: d.documents.filter((doc) => doc.status === 'PENDING').length,
-    hasFcmToken: d.pushDevices.length > 0,
-    hasVehicle: !!d.vehicle,
-    vehicleSummary: d.vehicle
-      ? `${d.vehicle.type} — ${d.vehicle.make} ${d.vehicle.model}`.trim()
-      : null,
-  };
-}
-
-async function signDriverDocuments(driver) {
-  if (!driver.documents) return driver;
-  for (const doc of driver.documents) {
-    if (doc.imageUrl && !doc.imageUrl.startsWith('http')) {
-      try {
-        doc.imageUrl = await getSignedUrl(doc.imageUrl, 3600);
-      } catch (_) {
-        // Keep original path if signing fails.
-      }
-    }
-  }
-  return driver;
-}
-
-function detailProjection(driver) {
-  const latestSubmission = driver.onboardingSubmissions?.[0] || null;
-  return {
-    id: driver.id,
-    name: driver.name,
-    email: driver.email,
-    phone: driver.phone,
-    photo: driver.photo,
-    rating: driver.rating,
-    totalTrips: driver.totalTrips,
-    isOnline: driver.isOnline,
-    isVerified: driver.isVerified,
-    verificationStatus: driver.verificationStatus,
-    emergencyContact: driver.emergencyContact,
-    createdAt: driver.createdAt,
-    onboardingSubmittedAt: driver.onboardingSubmittedAt,
-    profile: {
-      dateOfBirth: driver.dateOfBirth,
-      gender: driver.gender,
-      language: driver.language,
-      nationality: driver.nationality,
-      licenseClass: driver.licenseClass,
-      licenseExpiry: driver.licenseExpiry,
-      hasGDL: driver.hasGDL,
-      gdlExpiry: driver.gdlExpiry,
-      addressLine1: driver.addressLine1,
-      addressLine2: driver.addressLine2,
-      city: driver.city,
-      postcode: driver.postcode,
-      state: driver.state,
-      workingStates: driver.workingStates,
-      emergencyContactName: driver.emergencyContactName,
-      emergencyContactRelation: driver.emergencyContactRelation,
-      emergencyContactPhone: driver.emergencyContactPhone,
-      bankName: driver.bankName,
-      bankAccountHolder: driver.bankAccountHolder,
-      pdpaConsent: driver.pdpaConsent,
-      backgroundCheckConsent: driver.backgroundCheckConsent,
-      agreementVersion: driver.agreementVersion,
-      noOffencesDeclared: driver.noOffencesDeclared,
-    },
-    sensitive: Object.fromEntries(
-      Array.from(PII_FIELDS).map((field) => [field, maskedField(driver[field])])
-    ),
-    documents: driver.documents,
-    vehicle: driver.vehicle,
-    latestSubmission: latestSubmission
-      ? {
-          id: latestSubmission.id,
-          submittedAt: latestSubmission.submittedAt,
-          agreementVersion: latestSubmission.agreementVersion,
-        }
-      : null,
-  };
-}
 
 // GET /api/admin/drivers — list all drivers with document/vehicle counts
 router.get('/', async (req, res, next) => {
   try {
     console.log('[admin-drivers] GET /drivers — fetching all drivers');
     const drivers = await prisma.driver.findMany({
-      include: {
-        documents: { select: { id: true, type: true, status: true } },
-        vehicle: { select: { id: true, type: true, make: true, model: true } },
-        pushDevices: {
-          where: { notificationsEnabled: true },
-          select: { id: true },
-          take: 1,
-        },
-      },
+      include: DRIVER_REVIEW_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -155,29 +33,12 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/drivers/onboarding-queue — final submitted onboarding requests awaiting review
+// GET /api/admin/drivers/onboarding-queue — drivers that need verification review
 router.get('/onboarding-queue', async (req, res, next) => {
   try {
-    const drivers = await prisma.driver.findMany({
-      where: {
-        onboardingSubmittedAt: { not: null },
-        verificationStatus: { in: ['PENDING', 'IN_REVIEW'] },
-      },
-      include: {
-        documents: { select: { id: true, type: true, status: true } },
-        vehicle: { select: { id: true, type: true, make: true, model: true } },
-        pushDevices: {
-          where: { notificationsEnabled: true },
-          select: { id: true },
-          take: 1,
-        },
-      },
-      orderBy: { onboardingSubmittedAt: 'desc' },
-    });
-
     res.json({
       success: true,
-      data: drivers.map(driverListProjection),
+      data: await listDriverReviewCandidates({ db: prisma }),
     });
   } catch (err) {
     next(err);
@@ -190,14 +51,7 @@ router.get('/:id', async (req, res, next) => {
     console.log('[admin-drivers] GET driver detail — driverId:', req.params.id);
     const driver = await prisma.driver.findUnique({
       where: { id: req.params.id },
-      include: {
-        documents: { orderBy: { uploadedAt: 'desc' } },
-        vehicle: true,
-        onboardingSubmissions: {
-          orderBy: { submittedAt: 'desc' },
-          take: 1,
-        },
-      },
+      include: DRIVER_DETAIL_INCLUDE,
     });
 
     if (!driver) {
