@@ -31,6 +31,16 @@ function adminAuth(req, res, next) {
   if (req.headers['x-admin-proxy'] === 'admin-panel') {
     const assertion = verifyAdminAssertion(req);
     if (!assertion.ok) {
+      console.error('[adminAuth] Assertion failed:', assertion.reason, {
+        method: req.method,
+        originalUrl: req.originalUrl,
+        hasSignature: !!req.headers['x-admin-signature'],
+        hasActorId: !!req.headers['x-admin-actor-id'],
+        hasIssuedAt: !!req.headers['x-admin-issued-at'],
+        hasExpiresAt: !!req.headers['x-admin-expires-at'],
+        hasNonce: !!req.headers['x-admin-nonce'],
+        signingSecretPrefix: process.env.ADMIN_PROXY_SIGNING_SECRET ? process.env.ADMIN_PROXY_SIGNING_SECRET.slice(0, 6) : 'NOT_SET',
+      });
       return next(new AppError('Unauthorized: invalid admin assertion', 401));
     }
     req.adminActor = assertion.actor;
