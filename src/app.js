@@ -118,6 +118,7 @@ mountVersionedRoute(app, '/invoices', require('./routes/invoice.routes'));
 
 // Driver routes
 mountVersionedRoute(app, '/driver/auth', require('./routes/driver-auth.routes'));
+mountVersionedRoute(app, '/driver/onboarding', require('./routes/driver-onboarding.routes'));
 mountVersionedRoute(app, '/driver/profile', require('./routes/driver-profile.routes'));
 mountVersionedRoute(app, '/driver/documents', require('./routes/driver-documents.routes'));
 mountVersionedRoute(app, '/driver/upload', require('./routes/driver-upload.routes'));

@@ -2,8 +2,131 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('../services/auditLog');
+const { getSignedUrl } = require('../lib/supabase');
 
 const router = Router();
+
+const PII_FIELDS = new Set([
+  'mykadNumber',
+  'passportNumber',
+  'plksNumber',
+  'driversLicenseNumber',
+  'bankAccountNumber',
+  'duitNowId',
+  'tngEwalletId',
+  'lhdnTaxNumber',
+  'sstNumber',
+]);
+
+function maskSensitive(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length <= 4) return '*'.repeat(raw.length);
+  return `${'*'.repeat(Math.max(4, raw.length - 4))}${raw.slice(-4)}`;
+}
+
+function maskedField(value) {
+  return {
+    masked: maskSensitive(value),
+    hasValue: !!String(value || '').trim(),
+  };
+}
+
+function driverListProjection(d) {
+  return {
+    id: d.id,
+    name: d.name,
+    email: d.email,
+    phone: d.phone,
+    photo: d.photo,
+    isOnline: d.isOnline,
+    isVerified: d.isVerified,
+    verificationStatus: d.verificationStatus,
+    rating: d.rating,
+    totalTrips: d.totalTrips,
+    emergencyContact: d.emergencyContact,
+    createdAt: d.createdAt,
+    onboardingSubmittedAt: d.onboardingSubmittedAt,
+    documentsCount: d.documents.length,
+    documentsApproved: d.documents.filter((doc) => doc.status === 'APPROVED').length,
+    documentsPending: d.documents.filter((doc) => doc.status === 'PENDING').length,
+    hasFcmToken: d.pushDevices.length > 0,
+    hasVehicle: !!d.vehicle,
+    vehicleSummary: d.vehicle
+      ? `${d.vehicle.type} — ${d.vehicle.make} ${d.vehicle.model}`.trim()
+      : null,
+  };
+}
+
+async function signDriverDocuments(driver) {
+  if (!driver.documents) return driver;
+  for (const doc of driver.documents) {
+    if (doc.imageUrl && !doc.imageUrl.startsWith('http')) {
+      try {
+        doc.imageUrl = await getSignedUrl(doc.imageUrl, 3600);
+      } catch (_) {
+        // Keep original path if signing fails.
+      }
+    }
+  }
+  return driver;
+}
+
+function detailProjection(driver) {
+  const latestSubmission = driver.onboardingSubmissions?.[0] || null;
+  return {
+    id: driver.id,
+    name: driver.name,
+    email: driver.email,
+    phone: driver.phone,
+    photo: driver.photo,
+    rating: driver.rating,
+    totalTrips: driver.totalTrips,
+    isOnline: driver.isOnline,
+    isVerified: driver.isVerified,
+    verificationStatus: driver.verificationStatus,
+    emergencyContact: driver.emergencyContact,
+    createdAt: driver.createdAt,
+    onboardingSubmittedAt: driver.onboardingSubmittedAt,
+    profile: {
+      dateOfBirth: driver.dateOfBirth,
+      gender: driver.gender,
+      language: driver.language,
+      nationality: driver.nationality,
+      licenseClass: driver.licenseClass,
+      licenseExpiry: driver.licenseExpiry,
+      hasGDL: driver.hasGDL,
+      gdlExpiry: driver.gdlExpiry,
+      addressLine1: driver.addressLine1,
+      addressLine2: driver.addressLine2,
+      city: driver.city,
+      postcode: driver.postcode,
+      state: driver.state,
+      workingStates: driver.workingStates,
+      emergencyContactName: driver.emergencyContactName,
+      emergencyContactRelation: driver.emergencyContactRelation,
+      emergencyContactPhone: driver.emergencyContactPhone,
+      bankName: driver.bankName,
+      bankAccountHolder: driver.bankAccountHolder,
+      pdpaConsent: driver.pdpaConsent,
+      backgroundCheckConsent: driver.backgroundCheckConsent,
+      agreementVersion: driver.agreementVersion,
+      noOffencesDeclared: driver.noOffencesDeclared,
+    },
+    sensitive: Object.fromEntries(
+      Array.from(PII_FIELDS).map((field) => [field, maskedField(driver[field])])
+    ),
+    documents: driver.documents,
+    vehicle: driver.vehicle,
+    latestSubmission: latestSubmission
+      ? {
+          id: latestSubmission.id,
+          submittedAt: latestSubmission.submittedAt,
+          agreementVersion: latestSubmission.agreementVersion,
+        }
+      : null,
+  };
+}
 
 // GET /api/admin/drivers — list all drivers with document/vehicle counts
 router.get('/', async (req, res, next) => {
@@ -25,27 +148,36 @@ router.get('/', async (req, res, next) => {
     console.log('[admin-drivers] GET /drivers — returned', drivers.length, 'drivers');
     res.json({
       success: true,
-      data: drivers.map((d) => ({
-        id: d.id,
-        name: d.name,
-        email: d.email,
-        phone: d.phone,
-        photo: d.photo,
-        isOnline: d.isOnline,
-        isVerified: d.isVerified,
-        verificationStatus: d.verificationStatus,
-        rating: d.rating,
-        totalTrips: d.totalTrips,
-        emergencyContact: d.emergencyContact,
-        createdAt: d.createdAt,
-        documentsCount: d.documents.length,
-        documentsApproved: d.documents.filter((doc) => doc.status === 'APPROVED').length,
-        hasFcmToken: d.pushDevices.length > 0,
-        hasVehicle: !!d.vehicle,
-        vehicleSummary: d.vehicle
-          ? `${d.vehicle.type} — ${d.vehicle.make} ${d.vehicle.model}`
-          : null,
-      })),
+      data: drivers.map(driverListProjection),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/admin/drivers/onboarding-queue — final submitted onboarding requests awaiting review
+router.get('/onboarding-queue', async (req, res, next) => {
+  try {
+    const drivers = await prisma.driver.findMany({
+      where: {
+        onboardingSubmittedAt: { not: null },
+        verificationStatus: { in: ['PENDING', 'IN_REVIEW'] },
+      },
+      include: {
+        documents: { select: { id: true, type: true, status: true } },
+        vehicle: { select: { id: true, type: true, make: true, model: true } },
+        pushDevices: {
+          where: { notificationsEnabled: true },
+          select: { id: true },
+          take: 1,
+        },
+      },
+      orderBy: { onboardingSubmittedAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: drivers.map(driverListProjection),
     });
   } catch (err) {
     next(err);
@@ -61,6 +193,10 @@ router.get('/:id', async (req, res, next) => {
       include: {
         documents: { orderBy: { uploadedAt: 'desc' } },
         vehicle: true,
+        onboardingSubmissions: {
+          orderBy: { submittedAt: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -68,21 +204,47 @@ router.get('/:id', async (req, res, next) => {
       return next(new AppError('Driver not found', 404));
     }
 
-    // Replace stored object paths with short-lived signed URLs for admin preview
-    const { getSignedUrl } = require('../lib/supabase');
-    if (driver.documents) {
-      for (const doc of driver.documents) {
-        if (doc.imageUrl && !doc.imageUrl.startsWith('http')) {
-          try {
-            doc.imageUrl = await getSignedUrl(doc.imageUrl, 3600);
-          } catch (_) {
-            // Keep original path if signing fails
-          }
-        }
-      }
+    await signDriverDocuments(driver);
+
+    res.json({ success: true, data: detailProjection(driver) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/admin/drivers/:id/pii/reveal — reveal one sensitive field with audit trail
+router.post('/:id/pii/reveal', async (req, res, next) => {
+  try {
+    const { field, reason } = req.body || {};
+    if (!PII_FIELDS.has(field)) {
+      return next(new AppError('Unsupported sensitive field', 400));
+    }
+    if (typeof reason !== 'string' || reason.trim().length < 3) {
+      return next(new AppError('A reveal reason is required', 400));
     }
 
-    res.json({ success: true, data: driver });
+    const driver = await prisma.driver.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, [field]: true },
+    });
+    if (!driver) return next(new AppError('Driver not found', 404));
+
+    await recordAudit(prisma, {
+      actor: req.adminActor,
+      action: 'DRIVER_PII_REVEALED',
+      entityType: 'Driver',
+      entityId: req.params.id,
+      newValue: { field, reason: reason.trim().slice(0, 160) },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        field,
+        value: driver[field] || '',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
   } catch (err) {
     next(err);
   }

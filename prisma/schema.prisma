@@ -285,6 +285,38 @@ model Driver {
   phone              String                   @default("")
   driversLicenseNumber String                 @default("")
   dateOfBirth        String                   @default("")
+  gender             String                   @default("")
+  nationality        String                   @default("")
+  mykadNumber        String                   @default("")
+  passportNumber     String                   @default("")
+  passportExpiry     String?
+  plksNumber         String                   @default("")
+  plksExpiry         String?
+  licenseClass       String                   @default("")
+  licenseExpiry      String?
+  hasGDL             Boolean                  @default(false)
+  gdlExpiry          String?
+  addressLine1       String                   @default("")
+  addressLine2       String                   @default("")
+  city               String                   @default("")
+  postcode           String                   @default("")
+  state              String                   @default("")
+  workingStates      String[]                 @default([])
+  emergencyContactName String                 @default("")
+  emergencyContactRelation String             @default("")
+  emergencyContactPhone String                @default("")
+  bankName           String                   @default("")
+  bankAccountNumber  String                   @default("")
+  bankAccountHolder  String                   @default("")
+  duitNowId          String                   @default("")
+  tngEwalletId       String                   @default("")
+  lhdnTaxNumber      String                   @default("")
+  sstNumber          String                   @default("")
+  pdpaConsent        Boolean                  @default(false)
+  backgroundCheckConsent Boolean              @default(false)
+  agreementVersion   String                   @default("")
+  noOffencesDeclared Boolean                  @default(false)
+  onboardingSubmittedAt DateTime?
   photo              String?
   rating             Float                    @default(0)
   totalTrips         Int                      @default(0)
@@ -315,6 +347,7 @@ model Driver {
   payouts            DriverPayout[]
   onlineSessions     DriverOnlineSession[]
   extraCharges       BookingExtraCharge[]
+  onboardingSubmissions DriverOnboardingSubmission[]
 }
 
 model DriverOnlineSession {
@@ -378,9 +411,34 @@ model DriverVehicle {
   year         Int               @default(0)
   licensePlate String            @default("")
   color        String            @default("")
+  chassisNumber String           @default("")
+  engineNumber  String           @default("")
+  ownership     String           @default("")
+  ownerName     String           @default("")
+  roadTaxExpiry String?
+  puspakomExpiry String?
+  apadPermitNumber String        @default("")
+  apadPermitExpiry String?
+  insurerName   String           @default("")
+  insurancePolicyNumber String   @default("")
+  insuranceCoverageType String   @default("")
+  insuranceExpiry String?
+  hasCommercialCover Boolean     @default(false)
   createdAt    DateTime          @default(now())
 
   driver Driver @relation(fields: [driverId], references: [id])
+}
+
+model DriverOnboardingSubmission {
+  id               String   @id @default(uuid())
+  driverId         String
+  payload          Json
+  agreementVersion String   @default("")
+  submittedAt      DateTime @default(now())
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@index([driverId, submittedAt])
 }
 
 model DriverWallet {

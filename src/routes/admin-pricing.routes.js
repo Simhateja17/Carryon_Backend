@@ -3,37 +3,18 @@ const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('../services/auditLog');
 const {
-  VEHICLE_RATE_PER_KM,
   DRIVER_COMMISSION_RATE,
   VALID_VEHICLE_TYPES,
+  defaultVehiclePricing,
+  normalizeVehicleType,
+  vehicleLabel,
 } = require('../services/businessConfig');
 
 const router = Router();
 
-const VEHICLE_LABELS = {
-  BIKE: 'Bike',
-  CAR: 'Car',
-  PICKUP: 'Pickup',
-  VAN_7FT: 'Van 7ft',
-  VAN_9FT: 'Van 9ft',
-  LORRY_10FT: 'Lorry 10ft',
-  LORRY_14FT: 'Lorry 14ft',
-  LORRY_17FT: 'Lorry 17ft',
-};
-
-function fallbackVehicleRows() {
-  return VALID_VEHICLE_TYPES.map((type) => ({
-    id: null,
-    type,
-    name: VEHICLE_LABELS[type] || type,
-    basePrice: Number((VEHICLE_RATE_PER_KM[type].regular * 3).toFixed(2)),
-    pricePerKm: VEHICLE_RATE_PER_KM[type].regular,
-    minimumFare: Number((VEHICLE_RATE_PER_KM[type].regular * 5).toFixed(2)),
-    isAvailable: true,
-  }));
-}
-
 function sanitizeVehicle(input) {
+  const type = normalizeVehicleType(input.type || input.iconName || input.name);
+  if (!type) throw new AppError('Invalid vehicle type', 400);
   const name = String(input.name || '').trim();
   const basePrice = Number(input.basePrice);
   const pricePerKm = Number(input.pricePerKm);
@@ -52,12 +33,36 @@ function sanitizeVehicle(input) {
 
   return {
     id: input.id ? String(input.id) : null,
+    type,
     name,
     basePrice,
     pricePerKm,
     minimumFare,
     isAvailable: input.isAvailable !== false,
   };
+}
+
+function vehicleRowType(vehicle) {
+  return normalizeVehicleType(vehicle.iconName || vehicle.name);
+}
+
+function projectPricingRows(vehicles) {
+  const byType = new Map();
+  for (const vehicle of vehicles) {
+    const type = vehicleRowType(vehicle);
+    if (!type || byType.has(type)) continue;
+    byType.set(type, {
+      id: vehicle.id,
+      type,
+      name: vehicle.name || vehicleLabel(type),
+      basePrice: vehicle.basePrice,
+      pricePerKm: vehicle.pricePerKm,
+      minimumFare: vehicle.basePrice,
+      isAvailable: vehicle.isAvailable,
+    });
+  }
+
+  return VALID_VEHICLE_TYPES.map((type) => byType.get(type) || defaultVehiclePricing(type));
 }
 
 function minutesAgo(date) {
@@ -79,17 +84,7 @@ router.get('/', async (_req, res, next) => {
       }),
     ]);
 
-    const vehicleRows = vehicles.length
-      ? vehicles.map((vehicle) => ({
-          id: vehicle.id,
-          type: vehicle.iconName || vehicle.name.toUpperCase().replace(/\s+/g, '_'),
-          name: vehicle.name,
-          basePrice: vehicle.basePrice,
-          pricePerKm: vehicle.pricePerKm,
-          minimumFare: vehicle.basePrice,
-          isAvailable: vehicle.isAvailable,
-        }))
-      : fallbackVehicleRows();
+    const vehicleRows = projectPricingRows(vehicles);
 
     res.json({
       success: true,
@@ -139,6 +134,7 @@ router.put('/vehicles', async (req, res, next) => {
               name: vehicle.name,
               basePrice: vehicle.basePrice,
               pricePerKm: vehicle.pricePerKm,
+              iconName: vehicle.type,
               isAvailable: vehicle.isAvailable,
             },
           }));
@@ -150,7 +146,7 @@ router.put('/vehicles', async (req, res, next) => {
               capacity: '',
               basePrice: vehicle.basePrice,
               pricePerKm: vehicle.pricePerKm,
-              iconName: vehicle.name.toUpperCase().replace(/\s+/g, '_'),
+              iconName: vehicle.type,
               isAvailable: vehicle.isAvailable,
             },
           }));

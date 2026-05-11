@@ -47,4 +47,25 @@ describe('Business Config', () => {
   test('valid payment methods includes WALLET', () => {
     expect(config.VALID_PAYMENT_METHODS).toContain('WALLET');
   });
+
+  test('canonical vehicle catalog covers every supported vehicle type', () => {
+    expect(config.VEHICLE_CATALOG.map((entry) => entry.type)).toEqual(config.VALID_VEHICLE_TYPES);
+    for (const type of config.VALID_VEHICLE_TYPES) {
+      expect(config.vehicleCatalogEntry(type)).toMatchObject({ type, label: expect.any(String) });
+      expect(config.defaultVehiclePricing(type)).toMatchObject({
+        type,
+        name: expect.any(String),
+        basePrice: expect.any(Number),
+        pricePerKm: expect.any(Number),
+        minimumFare: expect.any(Number),
+        isAvailable: true,
+      });
+    }
+  });
+
+  test('normalizes vehicle labels without dropping canonical identity', () => {
+    expect(config.normalizeVehicleType('van-7ft')).toBe('VAN_7FT');
+    expect(config.vehicleLabel('LORRY_14FT')).toBe('Lorry 14ft');
+    expect(config.normalizeVehicleType('helicopter')).toBeNull();
+  });
 });
