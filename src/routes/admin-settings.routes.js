@@ -18,6 +18,17 @@ const { clearGeoFenceCache } = require('../services/geoFence');
 
 const router = Router();
 
+function validateCityQuery(value) {
+  const query = String(value || '').trim();
+  if (!query || query.length < 2) {
+    throw new AppError('query must be at least 2 characters', 400);
+  }
+  if (query.length > 120) {
+    throw new AppError('query is too long', 400);
+  }
+  return query;
+}
+
 function sinceHours(hours) {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
 }
@@ -101,13 +112,7 @@ router.put('/notifications', async (req, res, next) => {
 
 router.post('/geocode-city', async (req, res, next) => {
   try {
-    const query = String(req.body?.query || '').trim();
-    if (!query || query.length < 2) {
-      return next(new AppError('query must be at least 2 characters', 400));
-    }
-    if (query.length > 200) {
-      return next(new AppError('query is too long', 400));
-    }
+    const query = validateCityQuery(req.body?.query);
 
     const results = await searchPlaces(query);
     if (!results || results.length === 0) {
@@ -125,6 +130,31 @@ router.post('/geocode-city', async (req, res, next) => {
         region: place.region,
         country: place.country,
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/city-suggestions', async (req, res, next) => {
+  try {
+    const query = validateCityQuery(req.body?.query);
+    const results = await searchPlaces(query);
+
+    res.json({
+      success: true,
+      data: results.slice(0, 8).map((place) => {
+        const mainText = place.city || place.label || place.address;
+        const zone = place.region || place.country || place.address;
+        return {
+          placeId: place.placeId,
+          mainText,
+          description: [place.region, place.country].filter(Boolean).join(', ') || place.address,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          zone,
+        };
+      }).filter((place) => place.mainText && Number.isFinite(place.latitude) && Number.isFinite(place.longitude) && place.zone),
     });
   } catch (err) {
     next(err);
