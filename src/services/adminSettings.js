@@ -54,8 +54,8 @@ const DEFAULT_FLEET_SETTINGS = {
     criticalNotification: 'Fleet Sync Pending',
   },
   regions: [
-    { id: 'klang-valley', name: 'Klang Valley', hubCount: 42, zone: 'Greater Kuala Lumpur', enabled: true },
-    { id: 'penang', name: 'Penang', hubCount: 15, zone: 'Island and Mainland', enabled: true },
+    { id: 'klang-valley', name: 'Klang Valley', hubCount: 42, zone: 'Greater Kuala Lumpur', enabled: true, latitude: 3.139, longitude: 101.6869, radiusKm: 40 },
+    { id: 'penang', name: 'Penang', hubCount: 15, zone: 'Island and Mainland', enabled: true, latitude: 5.4164, longitude: 100.3327, radiusKm: 25 },
   ],
   vehicleClasses: VEHICLE_CATALOG.map((entry) => ({
     type: entry.type,
@@ -156,13 +156,37 @@ function sanitizeRegions(input) {
     if (!Number.isInteger(hubCount) || hubCount < 0 || hubCount > 10000) {
       throw new Error('region hubCount must be an integer between 0 and 10000');
     }
-    return {
+
+    const result = {
       id,
       name: boundedText(region.name, 80, 'region name'),
       hubCount,
       zone: boundedText(region.zone, 120, 'region zone'),
       enabled: region.enabled !== false,
+      latitude: null,
+      longitude: null,
+      radiusKm: null,
     };
+
+    if (region.latitude != null && region.longitude != null) {
+      const lat = Number(region.latitude);
+      const lng = Number(region.longitude);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        throw new Error('region latitude must be between -90 and 90');
+      }
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+        throw new Error('region longitude must be between -180 and 180');
+      }
+      const radiusKm = Number(region.radiusKm ?? 30);
+      if (!Number.isFinite(radiusKm) || radiusKm < 1 || radiusKm > 200) {
+        throw new Error('region radiusKm must be between 1 and 200');
+      }
+      result.latitude = Number(lat.toFixed(6));
+      result.longitude = Number(lng.toFixed(6));
+      result.radiusKm = Number(radiusKm.toFixed(1));
+    }
+
+    return result;
   });
 }
 

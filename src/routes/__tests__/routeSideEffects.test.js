@@ -58,6 +58,15 @@ jest.mock('../../middleware/driverAuth', () => ({
   requireDriver: (_req, _res, next) => next(),
 }));
 
+jest.mock('../../services/geoFence', () => ({
+  isPointInServiceArea: jest.fn().mockResolvedValue({ allowed: true, region: null }),
+  getEnabledGeoFences: jest.fn().mockResolvedValue([]),
+  clearGeoFenceCache: jest.fn(),
+  validateBookingLocations: jest.fn().mockResolvedValue({ valid: true, error: null, pickupRegion: null, deliveryRegion: null }),
+  validateOptionalBookingLocations: jest.fn().mockResolvedValue({ valid: true, error: null }),
+  assertDriverInServiceArea: jest.fn().mockResolvedValue({ allowed: true, region: null }),
+}));
+
 jest.mock('../../lib/pushNotifications', () => ({
   notifyUserBookingEvent: jest.fn().mockResolvedValue(undefined),
 }));

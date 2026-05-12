@@ -1,4 +1,5 @@
 const { money } = require('../lib/money');
+const { validateBookingLocations, validateOptionalBookingLocations } = require('./geoFence');
 
 const LEGACY_REGULAR_MODES = new Set(['', 'REGULAR']);
 const CANCELLATION_GRACE_MS = 3 * 60 * 1000;
@@ -92,4 +93,6 @@ module.exports = {
   computeCancellationOutcome,
   computePickupWaitCharge,
   isRegularBookingMode,
+  validateBookingLocations,
+  validateOptionalBookingLocations,
 };

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const { haversineKm } = require('../lib/distance');
-const { calculateRoute, optimizeWaypoints } = require('./locationProvider');
+const { calculateRoute } = require('./locationProvider');
 const { recordAudit } = require('./auditLog');
 
 const ACTIVE_BOOKING_STATUSES = [
@@ -14,7 +14,6 @@ const ACTIVE_BOOKING_STATUSES = [
 ];
 const ROUTE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const OVERVIEW_PRECISION = 3;
-const MAX_OPTIMIZE_WAYPOINTS = 20;
 const DRIVER_ROUTE_MOVEMENT_BUCKET_DEGREES = 0.0025;
 
 function isValidLatitude(value) {
@@ -556,149 +555,18 @@ async function getIncidentMapSnapshot() {
   };
 }
 
-async function resolveDispatchBooking(bookingId) {
-  if (bookingId === 'latest') {
-    return prisma.booking.findFirst({
-      where: { status: { in: ACTIVE_BOOKING_STATUSES } },
-      orderBy: { updatedAt: 'desc' },
-      select: bookingSelect(),
-    });
-  }
-
-  return prisma.booking.findFirst({
-    where: {
-      OR: [{ id: bookingId }, { orderCode: bookingId }],
-    },
-    select: bookingSelect(),
-  });
-}
-
-async function getDispatchMapSnapshot(bookingId) {
-  const booking = await resolveDispatchBooking(bookingId);
-  if (!booking) return null;
-  const routePhase = routePhaseForStatus(booking.status);
-  const plannedRoute = await getPlannedRoute(booking, new Date(), routePhase);
-  const actualPath = actualPathFor(booking);
-  return {
-    generatedAt: new Date().toISOString(),
-    precision: 'detail_exact',
-    booking: mapBookingSummary(booking, null),
-    routePhase,
-    activeRouteWindow: plannedRoute.activeRouteWindow,
-    plannedRoute,
-    actualPath,
-    deviation: deviationFor(booking, plannedRoute, actualPath),
-    events: booking.lifecycleEvents.map((event) => ({
-      id: event.id,
-      command: event.command,
-      success: event.success,
-      message: event.message,
-      position: coordinate(event.latitude, event.longitude),
-      distanceToExpectedMeters: event.distanceToExpectedMeters,
-      createdAt: event.createdAt.toISOString(),
-    })),
-  };
-}
-
-async function getOptimizeQueueSnapshot() {
-  const bookings = await prisma.booking.findMany({
-    where: { status: { in: ACTIVE_BOOKING_STATUSES }, driverId: { not: null } },
-    orderBy: [{ eta: 'desc' }, { updatedAt: 'asc' }],
-    take: MAX_OPTIMIZE_WAYPOINTS,
-    select: bookingSelect(),
-  });
-
-  return {
-    generatedAt: new Date().toISOString(),
-    waypointCap: MAX_OPTIMIZE_WAYPOINTS,
-    selectedCount: bookings.length,
-    queue: bookings.map((booking, index) => ({
-      priority: index + 1,
-      booking: mapBookingSummary(booking),
-      status: index < 3 ? 'CALCULATING' : 'PENDING',
-      savingsPct: 0,
-    })),
-  };
-}
-
-async function runOptimize({ actor, actorId } = {}) {
-  const auditActor = actor || (actorId ? { actorId, actorType: 'ADMIN' } : null);
-  if (!auditActor?.actorId) {
-    const err = new Error('Admin actor identity is required');
-    err.statusCode = 401;
-    throw err;
-  }
-
-  const queue = await getOptimizeQueueSnapshot();
-  const candidates = queue.queue
-    .map((entry) => entry.booking.route.dropoff)
-    .filter(Boolean)
-    .slice(0, MAX_OPTIMIZE_WAYPOINTS);
-
-  if (candidates.length < 2) {
-    return { generatedAt: new Date().toISOString(), status: 'SKIPPED', reason: 'Not enough route points', queue };
-  }
-
-  const origin = candidates[0];
-  const destination = candidates[candidates.length - 1];
-  const waypoints = candidates.slice(1, -1);
-  let optimization;
-  try {
-    optimization = await optimizeWaypoints(origin, destination, waypoints);
-  } catch (err) {
-    optimization = {
-      optimizedWaypoints: waypoints.map((point, originalIndex) => ({ position: point, originalIndex })),
-      distance: 0,
-      duration: 0,
-      fallbackReason: 'google_optimization_unavailable',
-    };
-  }
-
-  await recordAudit(prisma, {
-    actor: auditActor,
-    action: 'MAP_OPTIMIZATION_RUN',
-    entityType: 'AdminMaps',
-    entityId: 'optimize/run',
-    newValue: { selectedCount: queue.selectedCount, waypointCount: candidates.length },
-  });
-
-  return {
-    generatedAt: new Date().toISOString(),
-    status: optimization.fallbackReason ? 'FALLBACK' : 'COMPLETED',
-    queue,
-    optimizedRoute: {
-      origin,
-      destination,
-      waypoints: optimization.optimizedWaypoints || [],
-      distanceMeters: optimization.distance || 0,
-      durationSeconds: secondsFromDuration(optimization.duration),
-    },
-  };
-}
-
-function assertBookingIdShape(bookingId) {
-  if (typeof bookingId !== 'string') return false;
-  if (bookingId === 'latest') return true;
-  return /^[A-Za-z0-9][A-Za-z0-9_-]{2,80}$/.test(bookingId);
-}
-
 module.exports = {
   ACTIVE_BOOKING_STATUSES,
-  MAX_OPTIMIZE_WAYPOINTS,
   OVERVIEW_PRECISION,
-  assertBookingIdShape,
   activeRouteWindowFor,
   coordinate,
   deviationFor,
-  getDispatchMapSnapshot,
   getIncidentMapSnapshot,
   getLiveDashboardSnapshot,
   getLiveOverviewSnapshot,
-  getOptimizeQueueSnapshot,
   getPlannedRoute,
   routeHashFor,
   routePhaseForStatus,
   routeProgressPercent,
-  runOptimize,
   vehicleLabel,
 };

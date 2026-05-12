@@ -66,6 +66,9 @@ describe('adminSettings', () => {
       hubCount: 12,
       zone: 'Greater KL',
       enabled: true,
+      latitude: null,
+      longitude: null,
+      radiusKm: null,
     });
     expect(sanitized.vehicleClasses).toHaveLength(DEFAULT_FLEET_SETTINGS.vehicleClasses.length);
     expect(sanitized.vehicleClasses.map((entry) => entry.type)).toContain('LORRY_17FT');

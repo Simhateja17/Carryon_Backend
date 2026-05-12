@@ -62,12 +62,16 @@ function fallbackRouteDistance(originLat, originLng, destLat, destLng) {
 async function searchPlaces(query, lat, lng) {
   const body = { textQuery: query, maxResultCount: 10 };
   if (lat && lng) {
-    body.locationBias = {
-      circle: {
-        center: { latitude: parseFloat(lat), longitude: parseFloat(lng) },
-        radius: 50000.0,
-      },
-    };
+    const latF = parseFloat(lat);
+    const lngF = parseFloat(lng);
+    if (Number.isFinite(latF) && Number.isFinite(lngF)) {
+      body.locationBias = {
+        circle: {
+          center: { latitude: latF, longitude: lngF },
+          radius: 50000.0,
+        },
+      };
+    }
   }
 
   const response = await googleMapsFetch(
@@ -95,12 +99,16 @@ async function searchPlaces(query, lat, lng) {
 async function autocomplete(query, lat, lng) {
   const body = { input: query };
   if (lat && lng) {
-    body.locationBias = {
-      circle: {
-        center: { latitude: parseFloat(lat), longitude: parseFloat(lng) },
-        radius: 50000.0,
-      },
-    };
+    const latF = parseFloat(lat);
+    const lngF = parseFloat(lng);
+    if (Number.isFinite(latF) && Number.isFinite(lngF)) {
+      body.locationBias = {
+        circle: {
+          center: { latitude: latF, longitude: lngF },
+          radius: 50000.0,
+        },
+      };
+    }
   }
 
   const response = await googleMapsFetch(
@@ -235,11 +243,17 @@ async function calculateRoute(originLat, originLng, destLat, destLng) {
 }
 
 async function searchNearby(lat, lng, categories, radius) {
+  const latF = parseFloat(lat);
+  const lngF = parseFloat(lng);
+  if (!Number.isFinite(latF) || !Number.isFinite(lngF)) {
+    return [];
+  }
+  const radiusF = radius ? parseFloat(radius) : 5000.0;
   const body = {
     locationRestriction: {
       circle: {
-        center: { latitude: parseFloat(lat), longitude: parseFloat(lng) },
-        radius: radius ? parseFloat(radius) : 5000.0,
+        center: { latitude: latF, longitude: lngF },
+        radius: Number.isFinite(radiusF) && radiusF > 0 ? radiusF : 5000.0,
       },
     },
     maxResultCount: 15,
@@ -347,6 +361,9 @@ function buildIsolinePolygon(lat, lng, minutes) {
   const radiusMeters = radiusKm * 1000;
   const latF = parseFloat(lat);
   const lngF = parseFloat(lng);
+  if (!Number.isFinite(latF) || !Number.isFinite(lngF) || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+    return { geometry: [], distanceMeters: 0, durationSeconds: 0 };
+  }
 
   const numPoints = 36;
   const polygon = [];

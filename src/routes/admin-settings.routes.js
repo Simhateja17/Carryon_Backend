@@ -13,6 +13,8 @@ const {
   sanitizeFleetSettings,
   setAdminSettingTx,
 } = require('../services/adminSettings');
+const { searchPlaces } = require('../services/locationProvider');
+const { clearGeoFenceCache } = require('../services/geoFence');
 
 const router = Router();
 
@@ -97,6 +99,38 @@ router.put('/notifications', async (req, res, next) => {
   }
 });
 
+router.post('/geocode-city', async (req, res, next) => {
+  try {
+    const query = String(req.body?.query || '').trim();
+    if (!query || query.length < 2) {
+      return next(new AppError('query must be at least 2 characters', 400));
+    }
+    if (query.length > 200) {
+      return next(new AppError('query is too long', 400));
+    }
+
+    const results = await searchPlaces(query);
+    if (!results || results.length === 0) {
+      return next(new AppError('No results found for the given city name', 404));
+    }
+
+    const place = results[0];
+    res.json({
+      success: true,
+      data: {
+        latitude: place.latitude,
+        longitude: place.longitude,
+        formattedAddress: place.address,
+        city: place.city,
+        region: place.region,
+        country: place.country,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/fleet', async (_req, res, next) => {
   try {
     const [persisted, activeByType, auditItems] = await Promise.all([
@@ -159,6 +193,7 @@ router.put('/fleet', async (req, res, next) => {
       return setting;
     });
 
+    clearGeoFenceCache();
     res.json({ success: true, data: saved.value });
   } catch (err) {
     next(err);

@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { assertDriverInServiceArea } = require('./geoFence');
 
 const REQUIRED_DOCUMENT_TYPES = new Set([
   'DRIVERS_LICENSE',
@@ -70,6 +71,15 @@ async function assertDriverCanGoOnline(driverId, { db = prisma, now = new Date()
     err.details = eligibility;
     throw err;
   }
+
+  if (
+    driver &&
+    Number.isFinite(driver.currentLatitude) &&
+    Number.isFinite(driver.currentLongitude)
+  ) {
+    await assertDriverInServiceArea(driver.currentLatitude, driver.currentLongitude);
+  }
+
   return eligibility;
 }
 

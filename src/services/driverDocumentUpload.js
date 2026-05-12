@@ -53,6 +53,7 @@ function sanitizeStorageError(error) {
   return {
     name: error?.name || 'Error',
     statusCode: error?.statusCode || error?.status || null,
+    code: error?.code || null,
     message: error?.statusCode === 403 || error?.status === 403
       ? 'Storage upload was rejected by Supabase'
       : 'Storage upload failed',
@@ -85,6 +86,8 @@ async function uploadDriverDocument({
       driverId,
       type,
       detectedType: detected.type,
+      bucket: 'driver-documents',
+      pathPrefix: `${driverId}/`,
       storage: sanitizeStorageError(error),
     }));
     throw new AppError('Failed to upload document', 500);

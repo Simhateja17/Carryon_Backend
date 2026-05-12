@@ -141,6 +141,8 @@ describe('driver document upload service', () => {
       '[driver-documents] storage upload failed',
       expect.stringContaining('"name":"StorageApiError"')
     );
+    expect(errorSpy.mock.calls[0][1]).toContain('"bucket":"driver-documents"');
+    expect(errorSpy.mock.calls[0][1]).toContain('"pathPrefix":"driver-1/"');
     expect(errorSpy.mock.calls[0][1]).not.toContain('token secret');
     errorSpy.mockRestore();
   });

@@ -75,26 +75,15 @@ app.get('/health', async (req, res) => {
 
 // Storage diagnostic — protected with admin auth, no key prefixes exposed
 app.get('/health/storage', adminAuth, async (req, res) => {
-  const { getSupabaseAdmin } = require('./lib/supabase');
+  const { checkStorageHealth } = require('./lib/supabase');
 
   try {
-    const { data: buckets, error } = await getSupabaseAdmin().storage.listBuckets();
-    if (error) {
-      console.error('[health/storage] listBuckets failed:', error.message);
-      return res.status(503).json({ status: 'error', storage: 'unreachable' });
-    }
-    const bucketNames = (buckets || []).map(b => b.name);
-    const requiredBuckets = ['package-images', 'driver-documents', 'extra-charge-proofs'];
-    const missingBuckets = requiredBuckets.filter(b => !bucketNames.includes(b));
-    res.json({
-      status: missingBuckets.length === 0 ? 'ok' : 'degraded',
-      storage: 'reachable',
-      buckets: bucketNames,
-      ...(missingBuckets.length > 0 && { missingBuckets }),
-    });
+    const includeProbe = req.query.probe === '1' || req.query.probe === 'true';
+    const health = await checkStorageHealth({ probe: includeProbe });
+    res.status(health.status === 'ok' ? 200 : 503).json(health);
   } catch (err) {
     console.error('[health/storage] unexpected error:', err.message);
-    res.status(500).json({ status: 'error' });
+    res.status(503).json({ status: 'error', storage: 'unreachable' });
   }
 });
 
@@ -142,6 +131,7 @@ mountVersionedRoute(app, '/admin/pricing', require('./routes/admin-pricing.route
 mountVersionedRoute(app, '/admin/settings', require('./routes/admin-settings.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/bookings', require('./routes/admin-bookings.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/customers', require('./routes/admin-customers.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/revenue', require('./routes/admin-revenue.routes'), adminAuth);
 console.log('[app] All routes mounted');
 
 // Error handling

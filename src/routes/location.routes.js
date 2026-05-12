@@ -4,11 +4,12 @@ const { authenticateDriver, requireDriver } = require('../middleware/driverAuth'
 const prisma = require('../lib/prisma');
 const location = require('../services/locationProvider');
 const { updateDriverPosition } = require('../services/driverLocation');
+const { getEnabledGeoFences } = require('../services/geoFence');
 
 const router = express.Router();
 
 // GET /api/location/search-places?query=...&lat=...&lng=...
-router.get('/search-places', async (req, res, next) => {
+router.get('/search-places', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] GET /search-places — queryLen=${(req.query.query || '').length}`);
     const { query, lat, lng } = req.query;
@@ -25,7 +26,7 @@ router.get('/search-places', async (req, res, next) => {
 });
 
 // GET /api/location/reverse-geocode?lat=...&lng=...
-router.get('/reverse-geocode', async (req, res, next) => {
+router.get('/reverse-geocode', authenticateToken, async (req, res, next) => {
   try {
     console.log('[location] GET /reverse-geocode');
     const { lat, lng } = req.query;
@@ -78,6 +79,25 @@ router.get('/map-config', authenticateToken, async (req, res) => {
   });
 });
 
+// GET /api/location/service-areas
+router.get('/service-areas', authenticateToken, async (req, res, next) => {
+  try {
+    const regions = await getEnabledGeoFences();
+    res.json({
+      success: true,
+      data: regions.map((r) => ({
+        id: r.id,
+        name: r.name,
+        latitude: r.latitude,
+        longitude: r.longitude,
+        radiusKm: r.radiusKm,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/location/update-position
 router.post('/update-position', authenticateDriver, requireDriver, async (req, res, next) => {
   try {
@@ -124,7 +144,7 @@ router.get('/get-position/:deviceId', authenticate, async (req, res, next) => {
 });
 
 // GET /api/location/autocomplete?query=...&lat=...&lng=...
-router.get('/autocomplete', async (req, res, next) => {
+router.get('/autocomplete', authenticateToken, async (req, res, next) => {
   try {
     console.log(`[location] GET /autocomplete — queryLen=${(req.query.query || '').length}`);
     const { query, lat, lng } = req.query;

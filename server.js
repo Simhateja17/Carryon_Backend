@@ -40,13 +40,17 @@ async function start() {
   // Validate Supabase connectivity before accepting requests.
   // A failure here means SUPABASE_SERVICE_KEY is misconfigured on this server.
   try {
-    await validateSupabaseConnection();
+    const storageHealth = await validateSupabaseConnection();
     console.log('[supabase] Storage connection validated');
+    if (storageHealth.uploadProbe === 'ok') {
+      console.log('[supabase] Storage upload probe validated');
+    }
   } catch (err) {
     console.error('[supabase] STARTUP VALIDATION FAILED:', err.message);
     console.error('[supabase] Ensure SUPABASE_SERVICE_KEY is set to the service_role key on this server.');
-    // Do not exit — the rest of the API can still work; only storage uploads will fail.
-    // Change to process.exit(1) if you want a hard stop.
+    if (process.env.SUPABASE_STORAGE_REQUIRED !== 'false') {
+      process.exit(1);
+    }
   }
 
   const PORT = await findAvailablePort(Number(preferredPort));

@@ -20,7 +20,7 @@ const {
 } = require('../services/walletLedger');
 const { notifyNearbyDrivers } = require('../services/dispatch');
 const { recordAudit } = require('../services/auditLog');
-const { computeCancellationOutcome, isRegularBookingMode } = require('../services/bookingPolicy');
+const { computeCancellationOutcome, isRegularBookingMode, validateBookingLocations, validateOptionalBookingLocations } = require('../services/bookingPolicy');
 const { executeUserLifecycleCommand } = require('../services/deliveryLifecycle');
 const {
   idempotencyKeyFromRequest,
@@ -106,6 +106,12 @@ router.post('/', async (req, res, next) => {
     }
     const pickupCoords = requireCoordinates(pickupAddress, 'pickup');
     const deliveryCoords = requireCoordinates(deliveryAddress, 'delivery');
+
+    const locationCheck = await validateBookingLocations(pickupCoords, deliveryCoords);
+    if (!locationCheck.valid) {
+      return next(new AppError(locationCheck.error, 400));
+    }
+
     const normalizedPickupAddress = { ...pickupAddress, ...pickupCoords };
     const normalizedDeliveryAddress = { ...deliveryAddress, ...deliveryCoords };
     const quote = await quoteBookingFare({
@@ -239,6 +245,17 @@ router.post('/quote', async (req, res, next) => {
     } = parseBody(bookingQuoteSchema, req.body);
     if (enforceRegularOnly() && !isRegularBookingMode(deliveryMode)) {
       return next(new AppError('Only regular immediate bookings are supported.', 400));
+    }
+
+    const pickupLat = parseCoordinate(pickupAddress?.latitude);
+    const pickupLng = parseCoordinate(pickupAddress?.longitude);
+    const deliveryLat = parseCoordinate(deliveryAddress?.latitude);
+    const deliveryLng = parseCoordinate(deliveryAddress?.longitude);
+    const pCoords = (pickupLat != null && pickupLng != null) ? { latitude: pickupLat, longitude: pickupLng } : null;
+    const dCoords = (deliveryLat != null && deliveryLng != null) ? { latitude: deliveryLat, longitude: deliveryLng } : null;
+    const locationCheck = await validateOptionalBookingLocations(pCoords, dCoords);
+    if (!locationCheck.valid) {
+      return next(new AppError(locationCheck.error, 400));
     }
 
     const quote = await quoteBookingFare({
