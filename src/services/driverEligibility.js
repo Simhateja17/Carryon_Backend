@@ -59,7 +59,24 @@ function evaluateDriverEligibility(driver, now = new Date()) {
   };
 }
 
-async function assertDriverCanGoOnline(driverId, { db = prisma, now = new Date() } = {}) {
+function normalizeEligibilityLocation(location) {
+  if (!location) return null;
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
+}
+
+async function assertDriverCanGoOnline(
+  driverId,
+  {
+    db = prisma,
+    now = new Date(),
+    driverLocation = null,
+    serviceAreaCheck = assertDriverInServiceArea,
+  } = {}
+) {
   const driver = await db.driver.findUnique({
     where: { id: driverId },
     include: { documents: true },
@@ -72,13 +89,16 @@ async function assertDriverCanGoOnline(driverId, { db = prisma, now = new Date()
     throw err;
   }
 
-  if (
-    driver &&
-    Number.isFinite(driver.currentLatitude) &&
-    Number.isFinite(driver.currentLongitude)
-  ) {
-    await assertDriverInServiceArea(driver.currentLatitude, driver.currentLongitude);
+  const location = normalizeEligibilityLocation(driverLocation) || normalizeEligibilityLocation({
+    latitude: driver?.currentLatitude,
+    longitude: driver?.currentLongitude,
+  });
+  if (!location) {
+    const err = new Error('Current location is required to go online.');
+    err.statusCode = 400;
+    throw err;
   }
+  await serviceAreaCheck(location.latitude, location.longitude);
 
   return eligibility;
 }
@@ -143,5 +163,6 @@ module.exports = {
   documentExpiryReminderDays,
   evaluateDriverEligibility,
   isExpiredDocument,
+  normalizeEligibilityLocation,
   startDocumentExpiryLoop,
 };

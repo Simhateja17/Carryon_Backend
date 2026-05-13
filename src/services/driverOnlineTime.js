@@ -13,14 +13,43 @@ function sessionOverlapHours(session, windowStart, windowEnd) {
   return hoursBetween(start, end);
 }
 
-async function setDriverOnlineStatus(driverId, isOnline, { db = prisma, now = new Date() } = {}) {
+function normalizeOnlineLocation(input) {
+  const latitude = Number(input?.latitude);
+  const longitude = Number(input?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    const err = new Error('Valid latitude and longitude are required');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    const err = new Error('Valid latitude and longitude are required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { latitude, longitude };
+}
+
+async function setDriverOnlineStatus(
+  driverId,
+  isOnline,
+  { db = prisma, now = new Date(), location = null, serviceAreaCheck = undefined } = {},
+) {
+  const position = isOnline && location ? normalizeOnlineLocation(location) : null;
   if (isOnline) {
-    await assertDriverCanGoOnline(driverId, { db, now });
+    await assertDriverCanGoOnline(driverId, { db, now, driverLocation: position, serviceAreaCheck });
   }
   return db.$transaction(async (tx) => {
     const driver = await tx.driver.update({
       where: { id: driverId },
-      data: { isOnline },
+      data: {
+        isOnline,
+        ...(position
+          ? {
+            currentLatitude: position.latitude,
+            currentLongitude: position.longitude,
+          }
+          : {}),
+      },
     });
 
     if (isOnline) {
@@ -65,6 +94,7 @@ async function onlineHoursForWindow(driverId, windowStart, windowEnd = new Date(
 
 module.exports = {
   setDriverOnlineStatus,
+  normalizeOnlineLocation,
   onlineHoursForWindow,
   sessionOverlapHours,
 };

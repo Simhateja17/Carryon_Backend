@@ -58,12 +58,16 @@ router.put('/', async (req, res, next) => {
 // POST /api/driver/profile/toggle-online
 router.post('/toggle-online', async (req, res, next) => {
   try {
-    const { isOnline } = req.body;
+    const { isOnline, latitude, longitude, accuracyMeters, capturedAt } = req.body;
     if (typeof isOnline !== 'boolean') {
       return next(new AppError('isOnline must be a boolean', 400));
     }
     console.log('[driver-profile] POST toggle-online — driverId:', req.driver.id, 'isOnline →', isOnline);
-    const driver = await setDriverOnlineStatus(req.driver.id, isOnline);
+    const driver = await setDriverOnlineStatus(req.driver.id, isOnline, {
+      location: latitude == null && longitude == null
+        ? null
+        : { latitude, longitude, accuracyMeters, capturedAt },
+    });
     console.log('[driver-profile] toggle-online — driverId:', req.driver.id, 'isOnline now:', driver.isOnline);
     res.json({ success: true, data: { isOnline: driver.isOnline } });
   } catch (err) {

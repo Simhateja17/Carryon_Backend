@@ -58,13 +58,56 @@ describe('Driver Online Time', () => {
       $transaction: jest.fn((callback) => callback(tx)),
     };
     const now = new Date('2026-04-30T01:00:00.000Z');
+    const serviceAreaCheck = jest.fn().mockResolvedValue({ allowed: true });
 
-    await setDriverOnlineStatus('driver-1', true, { db, now });
+    await setDriverOnlineStatus('driver-1', true, {
+      db,
+      now,
+      location: { latitude: 37.390026, longitude: -122.08123 },
+      serviceAreaCheck,
+    });
 
+    expect(serviceAreaCheck).toHaveBeenCalledWith(37.390026, -122.08123);
+    expect(tx.driver.update).toHaveBeenCalledWith({
+      where: { id: 'driver-1' },
+      data: {
+        isOnline: true,
+        currentLatitude: 37.390026,
+        currentLongitude: -122.08123,
+      },
+    });
     expect(tx.driverOnlineSession.create).toHaveBeenCalledWith({
       data: { driverId: 'driver-1', startedAt: now },
     });
     expect(tx.driverOnlineSession.updateMany).not.toHaveBeenCalled();
+  });
+
+  test('requires a current location when driver goes online', async () => {
+    const db = {
+      driver: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'driver-1',
+          isVerified: true,
+          verificationStatus: 'APPROVED',
+          currentLatitude: 0,
+          currentLongitude: 0,
+          documents: [
+            { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+            { type: 'ROAD_TAX', status: 'APPROVED', expiryDate: '2027-01-01' },
+            { type: 'INSURANCE', status: 'APPROVED', expiryDate: '2027-01-01' },
+          ],
+        }),
+      },
+      $transaction: jest.fn(),
+    };
+    const serviceAreaCheck = jest.fn();
+
+    await expect(
+      setDriverOnlineStatus('driver-1', true, { db, serviceAreaCheck })
+    ).rejects.toThrow('Current location is required to go online.');
+
+    expect(serviceAreaCheck).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   test('closes open sessions when driver goes offline', async () => {
