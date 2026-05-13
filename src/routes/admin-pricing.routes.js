@@ -4,6 +4,7 @@ const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('../services/auditLog');
 const {
   DRIVER_COMMISSION_RATE,
+  VEHICLE_CATALOG,
   VALID_VEHICLE_TYPES,
   defaultVehiclePricing,
   normalizeVehicleType,
@@ -51,13 +52,14 @@ function projectPricingRows(vehicles) {
   for (const vehicle of vehicles) {
     const type = vehicleRowType(vehicle);
     if (!type || byType.has(type)) continue;
+    const catalogEntry = VEHICLE_CATALOG.find((entry) => entry.type === type);
     byType.set(type, {
       id: vehicle.id,
       type,
       name: vehicle.name || vehicleLabel(type),
       basePrice: vehicle.basePrice,
       pricePerKm: vehicle.pricePerKm,
-      minimumFare: vehicle.basePrice,
+      minimumFare: catalogEntry?.defaultMinimumFare ?? vehicle.basePrice,
       isAvailable: vehicle.isAvailable,
     });
   }

@@ -42,17 +42,6 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 };
 
 const DEFAULT_FLEET_SETTINGS = {
-  payout: {
-    baseRatePerKm: 1.45,
-    peakMultiplier: 1.5,
-  },
-  maintenance: {
-    mileageThresholdEnabled: true,
-    mileageThresholdKm: 5000,
-    emissionCheckEnabled: true,
-    telematicsFaultsEnabled: false,
-    criticalNotification: 'Fleet Sync Pending',
-  },
   regions: [
     { id: 'klang-valley', name: 'Klang Valley', hubCount: 42, zone: 'Greater Kuala Lumpur', enabled: true, latitude: 3.139, longitude: 101.6869, radiusKm: 40 },
     { id: 'penang', name: 'Penang', hubCount: 15, zone: 'Island and Mainland', enabled: true, latitude: 5.4164, longitude: 100.3327, radiusKm: 25 },
@@ -62,6 +51,7 @@ const DEFAULT_FLEET_SETTINGS = {
     label: entry.activeLabel,
     description: `${entry.label} routes. Max payload ${entry.defaultPayloadKg.toLocaleString('en-MY')}kg.`,
     enabled: true,
+    pricePerKm: entry.defaultPricePerKm,
   })),
 };
 
@@ -97,8 +87,6 @@ function sanitizeFleetSettings(input) {
   }
 
   return {
-    payout: sanitizePayout(input.payout),
-    maintenance: sanitizeMaintenance(input.maintenance),
     regions: sanitizeRegions(input.regions),
     vehicleClasses: sanitizeVehicleClasses(input.vehicleClasses),
   };
@@ -106,42 +94,9 @@ function sanitizeFleetSettings(input) {
 
 function mergeFleetSettings(input = {}) {
   return sanitizeFleetSettings({
-    payout: { ...DEFAULT_FLEET_SETTINGS.payout, ...(input.payout || {}) },
-    maintenance: { ...DEFAULT_FLEET_SETTINGS.maintenance, ...(input.maintenance || {}) },
     regions: Array.isArray(input.regions) ? input.regions : DEFAULT_FLEET_SETTINGS.regions,
     vehicleClasses: Array.isArray(input.vehicleClasses) ? input.vehicleClasses : DEFAULT_FLEET_SETTINGS.vehicleClasses,
   });
-}
-
-function sanitizePayout(input) {
-  const value = input && typeof input === 'object' ? input : {};
-  const baseRatePerKm = Number(value.baseRatePerKm ?? DEFAULT_FLEET_SETTINGS.payout.baseRatePerKm);
-  const peakMultiplier = Number(value.peakMultiplier ?? DEFAULT_FLEET_SETTINGS.payout.peakMultiplier);
-  if (!Number.isFinite(baseRatePerKm) || baseRatePerKm < 0 || baseRatePerKm > 10000) {
-    throw new Error('baseRatePerKm must be a valid non-negative number');
-  }
-  if (!Number.isFinite(peakMultiplier) || peakMultiplier < 1 || peakMultiplier > 10) {
-    throw new Error('peakMultiplier must be between 1 and 10');
-  }
-  return {
-    baseRatePerKm: Number(baseRatePerKm.toFixed(2)),
-    peakMultiplier: Number(peakMultiplier.toFixed(2)),
-  };
-}
-
-function sanitizeMaintenance(input) {
-  const value = input && typeof input === 'object' ? input : {};
-  const mileageThresholdKm = Number(value.mileageThresholdKm ?? DEFAULT_FLEET_SETTINGS.maintenance.mileageThresholdKm);
-  if (!Number.isInteger(mileageThresholdKm) || mileageThresholdKm < 100 || mileageThresholdKm > 1000000) {
-    throw new Error('mileageThresholdKm must be an integer between 100 and 1000000');
-  }
-  return {
-    mileageThresholdEnabled: Boolean(value.mileageThresholdEnabled),
-    mileageThresholdKm,
-    emissionCheckEnabled: Boolean(value.emissionCheckEnabled),
-    telematicsFaultsEnabled: Boolean(value.telematicsFaultsEnabled),
-    criticalNotification: boundedText(value.criticalNotification || DEFAULT_FLEET_SETTINGS.maintenance.criticalNotification, 120, 'criticalNotification'),
-  };
 }
 
 function sanitizeRegions(input) {
@@ -190,6 +145,10 @@ function sanitizeRegions(input) {
   });
 }
 
+// Sync: pricePerKm bounds must match FleetSettingsSchema in admin_panel route.ts
+const PRICE_PER_KM_MIN = 0.10;
+const PRICE_PER_KM_MAX = 50.00;
+
 function sanitizeVehicleClasses(input) {
   if (!Array.isArray(input)) throw new Error('vehicleClasses must be an array');
   const byType = new Map();
@@ -199,11 +158,17 @@ function sanitizeVehicleClasses(input) {
     }
     const type = normalizeVehicleType(item.type);
     if (!type) throw new Error('Invalid vehicle class type');
+    const catalogDefault = VEHICLE_CATALOG.find((entry) => entry.type === type);
+    const pricePerKm = Number(item.pricePerKm ?? catalogDefault?.defaultPricePerKm ?? 1);
+    if (!Number.isFinite(pricePerKm) || pricePerKm < PRICE_PER_KM_MIN || pricePerKm > PRICE_PER_KM_MAX) {
+      throw new Error(`pricePerKm for ${type} must be between ${PRICE_PER_KM_MIN} and ${PRICE_PER_KM_MAX}`);
+    }
     byType.set(type, {
       type,
       label: boundedText(item.label || type, 80, 'vehicle class label'),
       description: boundedText(item.description || '', 180, 'vehicle class description'),
       enabled: item.enabled !== false,
+      pricePerKm: Number(pricePerKm.toFixed(2)),
     });
   }
 
