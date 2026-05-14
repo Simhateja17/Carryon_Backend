@@ -101,7 +101,7 @@ router.post('/send-otp', async (req, res, next) => {
 
 // POST /api/auth/verify-otp — Verify OTP via Supabase Auth
 router.post('/verify-otp', async (req, res, next) => {
-  const { email, otp, mode = 'login', name = '' } = req.body;
+  const { email, otp, mode = 'login', name = '', phone = '' } = req.body;
 
   if (!email || !otp) {
     console.error('[auth] verify-otp failed: missing required fields', {
@@ -162,12 +162,12 @@ router.post('/verify-otp', async (req, res, next) => {
 
     if (!user) {
       user = await prisma.user.create({
-        data: { email, name, isVerified: true },
+        data: { email, name, phone, isVerified: true },
       });
       // Create wallet for new user
       await prisma.wallet.create({ data: { userId: user.id } });
     } else {
-      await prisma.user.update({ where: { email }, data: { isVerified: true, ...(name ? { name } : {}) } });
+      await prisma.user.update({ where: { email }, data: { isVerified: true, ...(name ? { name } : {}), ...(phone ? { phone } : {}) } });
       user = await prisma.user.findUnique({ where: { email } });
     }
 
@@ -282,7 +282,7 @@ router.post('/logout', authenticateToken, async (req, res, next) => {
 router.post('/sync', authenticateToken, async (req, res, next) => {
   try {
     const { email } = req.user;
-    const { name = '' } = req.body;
+    const { name = '', phone = '' } = req.body;
     console.log('[auth] POST sync — email:', maskEmail(email));
 
     let user = await prisma.user.findUnique({ where: { email } });
@@ -290,7 +290,7 @@ router.post('/sync', authenticateToken, async (req, res, next) => {
 
     if (!user) {
       user = await prisma.user.create({
-        data: { email, name, isVerified: true },
+        data: { email, name, phone, isVerified: true },
       });
       await prisma.wallet.create({ data: { userId: user.id } });
       console.log('[auth] sync — created new user id:', user.id);
