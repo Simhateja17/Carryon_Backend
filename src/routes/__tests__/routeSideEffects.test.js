@@ -308,7 +308,7 @@ describe('Booking route side effects', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  test('booking creation requires a real recipient email for delivery OTP', async () => {
+  test('booking creation rejects an invalid optional recipient email', async () => {
     const payload = bookingPayload();
     payload.deliveryAddress.contactEmail = '';
     payload.receiverEmail = 'not-an-email';
@@ -320,7 +320,7 @@ describe('Booking route side effects', () => {
     });
 
     expect(response.status).toBe(400);
-    expect(response.body.message).toBe('A valid recipient email is required for delivery OTP.');
+    expect(response.body.message).toBe('Recipient email is invalid.');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 

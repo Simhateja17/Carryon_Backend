@@ -101,8 +101,8 @@ router.post('/', async (req, res, next) => {
     }
 
     const recipientEmail = deliveryAddress.contactEmail || receiverEmail || '';
-    if (!isEmail(recipientEmail)) {
-      return next(new AppError('A valid recipient email is required for delivery OTP.', 400));
+    if (recipientEmail && !isEmail(recipientEmail)) {
+      return next(new AppError('Recipient email is invalid.', 400));
     }
     const pickupCoords = requireCoordinates(pickupAddress, 'pickup');
     const deliveryCoords = requireCoordinates(deliveryAddress, 'delivery');

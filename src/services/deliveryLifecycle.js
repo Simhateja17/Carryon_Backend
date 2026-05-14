@@ -164,7 +164,7 @@ function allowedCommandsFor(status) {
     case 'IN_TRANSIT':
       return [COMMANDS.ARRIVE_DROP];
     case 'ARRIVED_AT_DROP':
-      return [COMMANDS.REQUEST_DROP_OTP, COMMANDS.COMPLETE_DELIVERY];
+      return [COMMANDS.COMPLETE_DELIVERY];
     default:
       return [];
   }
@@ -443,31 +443,12 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
 
   assertStatus(booking, 'ARRIVED_AT_DROP', COMMANDS.COMPLETE_DELIVERY);
 
-  const otp = payload?.otp || payload?.otpCode || payload?.proof?.otpCode;
-  if (!otp || String(otp).trim().length < 4) {
-    throw lifecycleError('Recipient OTP is required', 400, 'RECIPIENT_OTP_REQUIRED');
-  }
   const proof = payload?.proof || {};
   const photoUrl = proof.photoUrl || payload?.photoUrl || null;
   const recipientName = proof.recipientName || payload?.recipientName || null;
-  if (!photoUrl && !recipientName) {
-    throw lifecycleError('Proof photo or recipient name is required', 400, 'PROOF_REQUIRED');
+  if (!photoUrl) {
+    throw lifecycleError('Proof photo is required', 400, 'PROOF_PHOTO_REQUIRED');
   }
-  const otpWindow = deliveryOtpWindow(booking.deliveryOtpSentAt);
-  if (!booking.deliveryOtpSentAt || !otpWindow.active) {
-    throw lifecycleError('Recipient OTP expired. Please resend the OTP.', 400, 'RECIPIENT_OTP_EXPIRED');
-  }
-
-  const recipientEmail = booking.deliveryAddress?.contactEmail || booking.user?.email || '';
-  assertOtpNotLocked(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
-  const otpResult = actor.actorType === 'USER'
-    ? await verifyUserDeliveryOtp({ booking, otp, recipientEmail })
-    : await verifyDeliveryOtp({ booking, otp, recipientEmail });
-  if (!otpResult.valid) {
-    recordOtpFailure(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
-    throw lifecycleError(otpResult.error, 400, 'RECIPIENT_OTP_INVALID');
-  }
-  resetOtpFailures(booking.id, actor.actorId, COMMANDS.COMPLETE_DELIVERY);
 
   const now = new Date();
   const updated = await prisma.$transaction(async (tx) => {
@@ -639,14 +620,6 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
           return resultPayload({ booking, message: 'Pickup already verified', locationEvidence });
         }
         assertStatus(booking, 'DRIVER_ARRIVED', normalizedCommand);
-        const otp = payload.otp || payload.pickupOtp;
-        if (!otp) throw lifecycleError('OTP is required', 400, 'PICKUP_OTP_REQUIRED');
-        assertOtpNotLocked(booking.id, actor.actorId, normalizedCommand);
-        if (booking.otp !== String(otp).trim()) {
-          recordOtpFailure(booking.id, actor.actorId, normalizedCommand);
-          throw lifecycleError('Invalid OTP', 400, 'PICKUP_OTP_INVALID');
-        }
-        resetOtpFailures(booking.id, actor.actorId, normalizedCommand);
         const now = new Date();
         const waitCharge = computePickupWaitCharge({
           arrivedAt: booking.driverArrivedAt,
@@ -706,7 +679,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
             fromStatus: booking.status,
             toStatus: 'PICKUP_DONE',
             success: true,
-            message: 'Pickup OTP verified',
+            message: 'Pickup confirmed',
             latitude: locationEvidence?.latitude ?? null,
             longitude: locationEvidence?.longitude ?? null,
             accuracyMeters: locationEvidence?.accuracyMeters ?? null,
@@ -716,7 +689,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
           return changed;
         });
         await notifyUserBookingEvent(updated, 'PICKUP_DONE');
-        return resultPayload({ booking: updated, message: 'Pickup OTP verified', locationEvidence });
+        return resultPayload({ booking: updated, message: 'Pickup confirmed', locationEvidence });
       }
 
       case COMMANDS.START_DELIVERY:
@@ -748,8 +721,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
         });
 
       case COMMANDS.REQUEST_DROP_OTP:
-        assertStatus(booking, 'ARRIVED_AT_DROP', normalizedCommand);
-        return requestDropOtp({ booking, actor, payload, locationEvidence });
+        throw lifecycleError('Delivery OTP is disabled for this flow', 410, 'DELIVERY_OTP_DISABLED');
 
       case COMMANDS.COMPLETE_DELIVERY:
         return completeDelivery({ booking, actor, payload, locationEvidence });
