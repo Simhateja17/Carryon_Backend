@@ -14,7 +14,16 @@ function driver(overrides = {}) {
     backgroundCheckConsent: true,
     noOffencesDeclared: true,
     vehicle: { id: 'vehicle-1' },
-    documents: [{ id: 'doc-1', status: 'APPROVED' }],
+    documents: [
+      { id: 'doc-1', type: 'MYKAD_FRONT', status: 'APPROVED' },
+      { id: 'doc-2', type: 'MYKAD_BACK', status: 'APPROVED' },
+      { id: 'doc-3', type: 'SELFIE', status: 'APPROVED' },
+      { id: 'doc-4', type: 'DRIVERS_LICENSE', status: 'APPROVED' },
+      { id: 'doc-5', type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED' },
+      { id: 'doc-6', type: 'VEHICLE_REGISTRATION', status: 'APPROVED' },
+      { id: 'doc-7', type: 'VEHICLE_PHOTO_FRONT', status: 'APPROVED' },
+      { id: 'doc-8', type: 'VEHICLE_PHOTO_BACK', status: 'APPROVED' },
+    ],
     ...overrides,
   };
 }
@@ -37,6 +46,7 @@ describe('admin driver verification decisions', () => {
     expect(blockers).toEqual(expect.arrayContaining([
       'Vehicle details must be submitted before approval.',
       '1 document still pending review.',
+      'Required approved documents are missing: MYKAD_FRONT, MYKAD_BACK, SELFIE, DRIVERS_LICENSE, DRIVERS_LICENSE_BACK, VEHICLE_REGISTRATION, VEHICLE_PHOTO_FRONT, VEHICLE_PHOTO_BACK.',
       'PDPA consent is missing.',
     ]));
   });

@@ -5,6 +5,10 @@ const { recordAudit } = require('./auditLog');
 const { VALID_DOCUMENT_TYPES } = require('./driverDocumentUpload');
 const { normalizeVehicleType } = require('./businessConfig');
 const { isDriverDocumentPathForDriver } = require('../lib/driverDocumentPaths');
+const {
+  MALAYSIAN_DRIVER_NATIONALITY,
+  missingDocumentTypes,
+} = require('../lib/driverOnboardingRequirements');
 
 const MAX_TEXT = 160;
 const MAX_LONG_TEXT = 320;
@@ -105,6 +109,9 @@ function parseOnboardingSubmission(body) {
   if (!vehicleType) {
     throw new AppError('Invalid vehicle type', 400);
   }
+  if (result.data.profile.nationality !== MALAYSIAN_DRIVER_NATIONALITY) {
+    throw new AppError('Carry On currently accepts Malaysian drivers only', 400);
+  }
 
   const seen = new Set();
   for (const document of result.data.documents) {
@@ -115,6 +122,10 @@ function parseOnboardingSubmission(body) {
       throw new AppError(`Duplicate document type: ${document.type}`, 400);
     }
     seen.add(document.type);
+  }
+  const missingRequiredTypes = missingDocumentTypes(result.data.documents);
+  if (missingRequiredTypes.length > 0) {
+    throw new AppError(`Missing required driver documents: ${missingRequiredTypes.join(', ')}`, 400);
   }
 
   return {

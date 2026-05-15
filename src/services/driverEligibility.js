@@ -1,11 +1,11 @@
 const prisma = require('../lib/prisma');
 const { assertDriverInServiceArea } = require('./geoFence');
+const {
+  REQUIRED_DRIVER_ELIGIBILITY_DOCUMENT_TYPES,
+  missingApprovedDocumentTypes,
+} = require('../lib/driverOnboardingRequirements');
 
-const REQUIRED_DOCUMENT_TYPES = new Set([
-  'DRIVERS_LICENSE',
-  'ROAD_TAX',
-  'INSURANCE',
-]);
+const REQUIRED_DOCUMENT_TYPES = new Set(REQUIRED_DRIVER_ELIGIBILITY_DOCUMENT_TYPES);
 
 function parseExpiryDate(value) {
   if (!value) return null;
@@ -34,13 +34,12 @@ function evaluateDriverEligibility(driver, now = new Date()) {
       .map((document) => [document.type, document])
   );
 
-  const missingRequiredDocuments = [];
+  const missingRequiredDocuments = missingApprovedDocumentTypes(documents);
   const expiredDocuments = [];
 
   for (const type of REQUIRED_DOCUMENT_TYPES) {
     const document = approvedByType.get(type);
     if (!document) {
-      missingRequiredDocuments.push(type);
       continue;
     }
     if (isExpiredDocument(document, now)) {

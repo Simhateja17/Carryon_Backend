@@ -1,5 +1,9 @@
 const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('./auditLog');
+const {
+  REQUIRED_DRIVER_ONBOARDING_DOCUMENT_TYPES,
+  missingApprovedDocumentTypes,
+} = require('../lib/driverOnboardingRequirements');
 
 const VERIFICATION_DECISIONS = new Set(['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED']);
 
@@ -19,8 +23,9 @@ function driverApprovalBlockers(driver) {
   if (!driver.vehicle) {
     blockers.push('Vehicle details must be submitted before approval.');
   }
-  if (docs.length === 0) {
-    blockers.push('At least one driver document must be uploaded before approval.');
+  const missingRequiredDocs = missingApprovedDocumentTypes(docs, REQUIRED_DRIVER_ONBOARDING_DOCUMENT_TYPES);
+  if (missingRequiredDocs.length > 0) {
+    blockers.push(`Required approved documents are missing: ${missingRequiredDocs.join(', ')}.`);
   }
   const pendingDocs = docs.filter((doc) => doc.status === 'PENDING').length;
   const rejectedDocs = docs.filter((doc) => doc.status === 'REJECTED').length;
