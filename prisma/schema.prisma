@@ -505,16 +505,31 @@ model DriverNotification {
 model DriverSupportTicket {
   id          String               @id @default(uuid())
   driverId    String
+  bookingId   String?
   subject     String
   category    DriverTicketCategory @default(GENERAL)
   description String               @default("")
   status      TicketStatus         @default(OPEN)
   priority    TicketPriority       @default(MEDIUM)
+  source      String               @default("MANUAL")
+  intakePath  Json?
+  intakeAnswers Json?
+  assignedAdminId String?
+  assignedAdminEmail String?
+  assignedAt  DateTime?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 
   driver   Driver               @relation(fields: [driverId], references: [id])
+  booking  Booking?             @relation(fields: [bookingId], references: [id])
   messages DriverTicketMessage[]
+  attachments DriverTicketAttachment[]
+
+  @@index([bookingId])
+  @@index([status, updatedAt])
+  @@index([assignedAdminId, status])
 }
 
 model DriverTicketMessage {
@@ -522,11 +537,33 @@ model DriverTicketMessage {
   ticketId  String
   senderId  String
   isStaff   Boolean  @default(false)
+  messageType String  @default("USER_MESSAGE")
+  isCustomerVisible Boolean @default(true)
   message   String
   imageUrl  String?
   createdAt DateTime @default(now())
 
   ticket DriverSupportTicket @relation(fields: [ticketId], references: [id])
+  attachments DriverTicketAttachment[]
+}
+
+model DriverTicketAttachment {
+  id        String   @id @default(uuid())
+  ticketId  String
+  messageId String
+  uploadedById String
+  uploadedByType String
+  fileUrl   String
+  storagePath String
+  mimeType String
+  fileSize Int
+  createdAt DateTime @default(now())
+
+  ticket DriverSupportTicket @relation(fields: [ticketId], references: [id])
+  message DriverTicketMessage @relation(fields: [messageId], references: [id])
+
+  @@index([ticketId, createdAt])
+  @@index([messageId])
 }
 
 model HelpArticle {
@@ -584,6 +621,7 @@ model Booking {
   chatMessages      ChatMessage[]
   userCoupons       UserCoupon[]
   supportTickets    SupportTicket[]
+  driverSupportTickets DriverSupportTicket[]
   invoice           Invoice?
   bookingRejections BookingRejection[]
   idempotencyKeys   IdempotencyKey[]
@@ -871,12 +909,24 @@ model SupportTicket {
   category  TicketCategory @default(OTHER)
   status    TicketStatus   @default(OPEN)
   priority  TicketPriority @default(MEDIUM)
+  source    String         @default("MANUAL")
+  intakePath Json?
+  intakeAnswers Json?
+  assignedAdminId String?
+  assignedAdminEmail String?
+  assignedAt DateTime?
+  resolvedAt DateTime?
+  closedAt DateTime?
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
   user     User            @relation(fields: [userId], references: [id])
   booking  Booking?        @relation(fields: [bookingId], references: [id])
   messages TicketMessage[]
+  attachments TicketAttachment[]
+
+  @@index([status, updatedAt])
+  @@index([assignedAdminId, status])
 }
 
 model TicketMessage {
@@ -884,11 +934,33 @@ model TicketMessage {
   ticketId  String
   senderId  String
   isStaff   Boolean  @default(false)
+  messageType String  @default("USER_MESSAGE")
+  isCustomerVisible Boolean @default(true)
   message   String
   imageUrl  String?
   createdAt DateTime @default(now())
 
   ticket SupportTicket @relation(fields: [ticketId], references: [id])
+  attachments TicketAttachment[]
+}
+
+model TicketAttachment {
+  id        String   @id @default(uuid())
+  ticketId  String
+  messageId String
+  uploadedById String
+  uploadedByType String
+  fileUrl   String
+  storagePath String
+  mimeType String
+  fileSize Int
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+  message TicketMessage @relation(fields: [messageId], references: [id])
+
+  @@index([ticketId, createdAt])
+  @@index([messageId])
 }
 
 // ── Invoice ─────────────────────────────────────────────

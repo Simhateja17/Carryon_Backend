@@ -27,15 +27,15 @@ describe('Booking Pricing — authoritative fare', () => {
       routeProvider,
     });
 
-    expect(quote.price).toBe(26.25);
+    expect(quote.price).toBe(26.5);
     expect(quote.distance).toBe(10);
     expect(quote.breakdown).toMatchObject({
       basePrice: 5,
       pricePerKm: 2,
       distanceFare: 20,
       offloadingFee: 0,
-      tax: 1.25,
-      total: 26.25,
+      tax: 1.5,
+      total: 26.5,
     });
     expect(routeProvider.fallbackRouteDistance).not.toHaveBeenCalled();
   });
@@ -62,10 +62,10 @@ describe('Booking Pricing — authoritative fare', () => {
 
     expect(quote.breakdown).toMatchObject({
       offloadingFee: 30,
-      tax: 2.75,
-      total: 57.75,
+      tax: 3.3,
+      total: 58.3,
     });
-    expect(quote.price).toBe(57.75);
+    expect(quote.price).toBe(58.3);
   });
 
   test('fails closed when route provider fails', async () => {

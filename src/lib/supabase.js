@@ -22,6 +22,12 @@ const REQUIRED_STORAGE_BUCKETS = [
     fileSizeLimit: 10 * 1024 * 1024,
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
   },
+  {
+    name: 'support-attachments',
+    public: false,
+    fileSizeLimit: 5 * 1024 * 1024,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'],
+  },
 ];
 
 function serviceRoleHeaders() {

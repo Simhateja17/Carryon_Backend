@@ -14,10 +14,10 @@ describe('bookingAdjustments', () => {
     expect(amounts).toEqual({
       baseFare: 20,
       adjustmentsTotal: 1.5,
-      subtotal: 20.48,
-      tax: 1.02,
+      subtotal: 20.28,
+      tax: 1.22,
       total: 21.5,
-      taxRate: 0.05,
+      taxRate: 0.06,
     });
   });
 

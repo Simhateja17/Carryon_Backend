@@ -125,8 +125,8 @@ describe('invoice routes', () => {
     expect(prisma.invoice.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         bookingId: 'booking-1',
-        subtotal: 20.48,
-        tax: 1.02,
+        subtotal: 20.28,
+        tax: 1.22,
         total: 21.5,
       }),
     });

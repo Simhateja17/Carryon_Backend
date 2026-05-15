@@ -31,7 +31,7 @@ function adjustmentTotal(adjustments = []) {
 }
 
 function invoiceAmountsForBooking(booking, adjustments = []) {
-  const taxRate = 0.05;
+  const taxRate = 0.06;
   const baseFare = baseFareForBooking(booking);
   const adjustmentsTotal = adjustmentTotal(adjustments);
   const total = money(baseFare + adjustmentsTotal);

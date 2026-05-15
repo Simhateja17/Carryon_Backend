@@ -43,7 +43,7 @@ const OTP_VERIFY_LOCK_MS = Number(process.env.OTP_VERIFY_LOCK_MS || 10 * 60 * 10
 
 const REFERRAL_REWARD_AMOUNT = 5.0; // RM 5
 const OFFLOADING_FEE = Number(process.env.OFFLOADING_FEE || 30);
-const BOOKING_TAX_RATE = Number(process.env.BOOKING_TAX_RATE || 0.05);
+const BOOKING_TAX_RATE = Number(process.env.BOOKING_TAX_RATE || 0.06);
 const COMPANY_INVOICE_PROFILE = {
   name: process.env.COMPANY_NAME || 'CarryOn Logistics Sdn Bhd',
   registration: process.env.COMPANY_REGISTRATION || '',
