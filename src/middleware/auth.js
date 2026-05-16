@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const prisma = require('../lib/prisma');
 const { AppError } = require('./errorHandler');
+const { normalizePhone, resolveUniqueByPhone } = require('../services/authOtp');
 
 // JWKS client for Supabase ES256 token verification
 const client = jwksClient({
@@ -26,6 +27,17 @@ function verifyToken(token) {
   });
 }
 
+async function resolveUser(decoded) {
+  if (decoded.email) {
+    return prisma.user.findUnique({ where: { email: decoded.email } });
+  }
+  const phone = normalizePhone(decoded.phone);
+  if (phone) {
+    return resolveUniqueByPhone({ prisma, model: 'user', phone });
+  }
+  return null;
+}
+
 // Verifies Supabase JWT and resolves Prisma User record
 async function authenticate(req, res, next) {
   const header = req.headers.authorization;
@@ -41,9 +53,9 @@ async function authenticate(req, res, next) {
   try {
     const token = header.split(' ')[1];
     const decoded = await verifyToken(token);
-    const email = decoded.email;
-    if (!email) {
-      console.error('[auth-mw] authenticate failed: token decoded without email', {
+    const tokenPhone = normalizePhone(decoded.phone);
+    if (!decoded.email && !tokenPhone) {
+      console.error('[auth-mw] authenticate failed: token decoded without email or phone', {
         path: req.originalUrl,
         method: req.method,
         supabaseId: decoded.sub || null,
@@ -51,12 +63,13 @@ async function authenticate(req, res, next) {
       return next(new AppError('Invalid token payload', 401));
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await resolveUser(decoded);
     if (!user) {
       console.error('[auth-mw] authenticate failed: user not found in Prisma', {
         path: req.originalUrl,
         method: req.method,
-        email,
+        email: decoded.email || null,
+        phone: tokenPhone || null,
       });
       return next(new AppError('User not found. Please sync your account first.', 401));
     }
@@ -82,13 +95,13 @@ async function authenticate(req, res, next) {
 
 async function resolveAuthenticatedUserFromToken(token) {
   const decoded = await verifyToken(token);
-  const email = decoded.email;
-  if (!email) {
+  const tokenPhone = normalizePhone(decoded.phone);
+  if (!decoded.email && !tokenPhone) {
     const err = new AppError('Invalid token payload', 401);
     throw err;
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await resolveUser(decoded);
   if (!user) {
     const err = new AppError('User not found. Please sync your account first.', 401);
     throw err;
@@ -118,8 +131,9 @@ async function authenticateToken(req, res, next) {
   try {
     const token = header.split(' ')[1];
     const decoded = await verifyToken(token);
-    if (!decoded.email) {
-      console.error('[auth-mw] authenticateToken failed: token decoded without email', {
+    const tokenPhone = normalizePhone(decoded.phone);
+    if (!decoded.email && !tokenPhone) {
+      console.error('[auth-mw] authenticateToken failed: token decoded without email or phone', {
         path: req.originalUrl,
         method: req.method,
         supabaseId: decoded.sub || null,
@@ -128,7 +142,8 @@ async function authenticateToken(req, res, next) {
     }
     req.user = {
       supabaseId: decoded.sub,
-      email: decoded.email,
+      email: decoded.email || '',
+      phone: tokenPhone,
     };
     next();
   } catch (err) {

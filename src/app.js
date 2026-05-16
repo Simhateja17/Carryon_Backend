@@ -58,6 +58,8 @@ const locationLimiter = rateLimit({
 mountVersionedMiddleware(app, '/auth/send-otp', authLimiter);
 mountVersionedMiddleware(app, '/auth/verify-otp', authLimiter);
 mountVersionedMiddleware(app, '/auth/refresh', authLimiter);
+mountVersionedMiddleware(app, '/driver/auth/send-otp', authLimiter);
+mountVersionedMiddleware(app, '/driver/auth/verify-otp', authLimiter);
 mountVersionedMiddleware(app, '/wallet/topup', walletLimiter);
 mountVersionedMiddleware(app, '/wallet/pay', walletLimiter);
 mountVersionedMiddleware(app, '/location', locationLimiter);

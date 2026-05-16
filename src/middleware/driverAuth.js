@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const prisma = require('../lib/prisma');
 const { AppError } = require('./errorHandler');
+const { normalizePhone, phoneLookupVariants } = require('../services/authOtp');
 
 // JWKS client for Supabase ES256 token verification
 const client = jwksClient({
@@ -47,9 +48,10 @@ async function authenticateDriver(req, res, next) {
     const token = header.split(' ')[1];
     
     const decoded = await verifyToken(token);
-    const email = decoded.email;
-    if (!email) {
-      console.error('[DriverAuth] Authentication failed: token decoded without email', {
+    const email = decoded.email || '';
+    const phone = normalizePhone(decoded.phone);
+    if (!email && !phone) {
+      console.error('[DriverAuth] Authentication failed: token decoded without email or phone', {
         path: req.originalUrl,
         method: req.method,
         supabaseId: decoded.sub || null,
@@ -57,18 +59,28 @@ async function authenticateDriver(req, res, next) {
       return next(new AppError('Invalid token payload', 401));
     }
 
-    const driver = await prisma.driver.findUnique({ where: { email }, include: { vehicle: true } });
+    const phoneMatches = !email && phone
+      ? await prisma.driver.findMany({ where: { phone: { in: phoneLookupVariants(phone) } }, include: { vehicle: true }, take: 2 })
+      : [];
+    if (phoneMatches.length > 1) {
+      return next(new AppError('Phone number is linked to multiple driver accounts. Please contact support.', 401));
+    }
+    const driver = email
+      ? await prisma.driver.findUnique({ where: { email }, include: { vehicle: true } })
+      : phoneMatches[0] || null;
     if (!driver) {
-      console.log('[DriverAuth] No driver found for email:', email, '- allowing registration flow');
+      console.log('[DriverAuth] No driver found for token identity - allowing registration flow');
       req.driver = null;
       req.driverEmail = email;
+      req.driverPhone = phone;
       req.supabaseId = decoded.sub;
       return next();
     }
 
     console.log('[DriverAuth] Driver authenticated:', driver.id);
     req.driver = driver;
-    req.driverEmail = email;
+    req.driverEmail = driver.email || email;
+    req.driverPhone = driver.phone || phone;
     req.supabaseId = decoded.sub;
     next();
   } catch (err) {

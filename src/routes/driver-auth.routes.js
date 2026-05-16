@@ -5,8 +5,152 @@ const { AppError } = require('../middleware/errorHandler');
 const { maskEmail } = require('../lib/maskEmail');
 const { normalizeLanguageCode } = require('../lib/supportedLanguages');
 const { serializeDriver } = require('../lib/driverResponse');
+const { OTP_LENGTH, isValidOtp, normalizeOtp } = require('../lib/otp');
+const {
+  normalizeEmail,
+  normalizePhone,
+  maskPhone,
+  assertUniquePhone,
+  sendSmsOtp,
+  verifySmsOtp,
+} = require('../services/authOtp');
 
 const router = Router();
+
+// POST /api/driver/auth/send-otp — Send driver login/signup OTP by SMS
+router.post('/send-otp', async (req, res, next) => {
+  const email = normalizeEmail(req.body.email);
+  const mode = req.body.mode || 'login';
+  const requestedPhone = normalizePhone(req.body.phone);
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return next(new AppError('A valid email address is required.', 400));
+  }
+
+  try {
+    let phone = requestedPhone;
+    if (mode === 'login') {
+      const driver = await prisma.driver.findUnique({ where: { email } });
+      if (!driver) {
+        return next(new AppError('No driver account found with this email. Please sign up.', 400));
+      }
+      phone = normalizePhone(driver.phone);
+      if (!phone) {
+        return next(new AppError('This driver account does not have a valid phone number. Please contact support.', 400));
+      }
+    } else if (mode === 'signup') {
+      const existingDriver = await prisma.driver.findUnique({ where: { email } });
+      if (existingDriver) {
+        return next(new AppError('A driver account with this email already exists. Please log in.', 400));
+      }
+      if (!phone) {
+        return next(new AppError('A valid phone number is required.', 400));
+      }
+      await assertUniquePhone({ prisma, model: 'driver', phone });
+    } else {
+      return next(new AppError('Invalid OTP mode.', 400));
+    }
+
+    const sent = await sendSmsOtp(phone);
+    console.log(`[driver-auth] OTP sent to ${maskEmail(email)} via SMS ${sent.maskedPhone}`);
+    res.json({ success: true, message: 'OTP sent successfully.', maskedPhone: sent.maskedPhone });
+  } catch (err) {
+    console.error('[driver-auth] send-otp failed', {
+      email: maskEmail(email),
+      mode,
+      message: err.message,
+    });
+    next(err);
+  }
+});
+
+// POST /api/driver/auth/verify-otp — Verify driver SMS OTP and sync/register Driver
+router.post('/verify-otp', async (req, res, next) => {
+  const email = normalizeEmail(req.body.email);
+  const mode = req.body.mode || 'login';
+  const requestedPhone = normalizePhone(req.body.phone);
+  const { otp, name = '', emergencyContact = '' } = req.body;
+  const requestedLanguage = req.body?.language ?? req.body?.preferredLanguage;
+  const language = requestedLanguage !== undefined ? normalizeLanguageCode(requestedLanguage) : undefined;
+
+  if (!email || !otp) {
+    return next(new AppError('Email and OTP are required.', 400));
+  }
+  if (!isValidOtp(otp)) {
+    return next(new AppError(`OTP must be ${OTP_LENGTH} digits.`, 400));
+  }
+
+  try {
+    let phone = requestedPhone;
+    if (mode === 'login') {
+      const existingDriver = await prisma.driver.findUnique({ where: { email } });
+      if (!existingDriver) {
+        return next(new AppError('No driver account found with this email. Please sign up.', 400));
+      }
+      phone = normalizePhone(existingDriver.phone);
+    } else if (mode === 'signup') {
+      if (!phone) {
+        return next(new AppError('A valid phone number is required.', 400));
+      }
+      await assertUniquePhone({ prisma, model: 'driver', phone, excludingEmail: email });
+    } else {
+      return next(new AppError('Invalid OTP mode.', 400));
+    }
+
+    const { token, refreshToken, expiresIn } = await verifySmsOtp({ phone, otp: normalizeOtp(otp) });
+
+    let driver = await prisma.driver.findUnique({
+      where: { email },
+      include: { documents: true, vehicle: true },
+    });
+    const isNewDriver = !driver;
+    if (isNewDriver) {
+      await assertUniquePhone({ prisma, model: 'driver', phone, excludingEmail: email });
+    }
+
+    if (!driver) {
+      driver = await prisma.driver.create({
+        data: {
+          email,
+          name,
+          phone,
+          emergencyContact,
+          ...(language !== undefined && { language }),
+        },
+        include: { documents: true, vehicle: true },
+      });
+      await prisma.driverWallet.create({ data: { driverId: driver.id } });
+    } else {
+      driver = await prisma.driver.update({
+        where: { email },
+        data: {
+          ...(name ? { name } : {}),
+          ...(phone ? { phone } : {}),
+          ...(emergencyContact ? { emergencyContact } : {}),
+          ...(language !== undefined && { language }),
+        },
+        include: { documents: true, vehicle: true },
+      });
+    }
+
+    console.log(`[driver-auth] OTP verified for ${maskEmail(email)} via SMS ${maskPhone(phone)} (mode=${mode})`);
+    res.json({
+      success: true,
+      driver: serializeDriver(driver),
+      isNewDriver,
+      token,
+      refreshToken,
+      expiresIn,
+    });
+  } catch (err) {
+    console.error('[driver-auth] verify-otp failed', {
+      email: maskEmail(email),
+      mode,
+      message: err.message,
+    });
+    next(err);
+  }
+});
 
 // POST /api/driver/auth/sync — Create or find Driver by email from Supabase JWT
 router.post('/sync', authenticateDriver, async (req, res, next) => {
