@@ -128,12 +128,15 @@ mountVersionedRoute(app, '/admin/drivers', require('./routes/admin-drivers.route
 mountVersionedRoute(app, '/admin/extra-charges', require('./routes/admin-extra-charges.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/command-center', require('./routes/admin-command-center.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/maps', require('./routes/admin-maps.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/safety-fraud', require('./routes/admin-safety-fraud.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/pricing', require('./routes/admin-pricing.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/settings', require('./routes/admin-settings.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/bookings', require('./routes/admin-bookings.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/customers', require('./routes/admin-customers.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/revenue', require('./routes/admin-revenue.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/analytics', require('./routes/admin-analytics.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/support', require('./routes/admin-support.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/users', require('./routes/admin-users.routes'), adminAuth);
 console.log('[app] All routes mounted');
 
 // Error handling

@@ -61,6 +61,9 @@ function sanitizeNotificationSettings(input) {
   if (!input || !Array.isArray(input.alerts)) {
     throw new Error('alerts must be an array');
   }
+  if (input.alerts.length > 20) {
+    throw new Error('alerts cannot contain more than 20 entries');
+  }
 
   return {
     alerts: input.alerts.map((alert) => {
@@ -71,8 +74,8 @@ function sanitizeNotificationSettings(input) {
 
       return {
         type,
-        label: String(alert.label || '').trim().slice(0, 80),
-        sub: String(alert.sub || '').trim().slice(0, 160),
+        label: boundedText(alert.label, 80, 'alert label'),
+        sub: boundedText(alert.sub, 160, 'alert description'),
         sms: Boolean(alert.sms),
         push: Boolean(alert.push),
         email: Boolean(alert.email),

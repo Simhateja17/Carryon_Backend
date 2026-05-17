@@ -2,7 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { parsePagination } = require('../lib/pagination');
-const { sendPushToDriverIds } = require('../lib/pushNotifications');
+const { dispatchAdminNotification } = require('../services/adminNotificationDispatch');
 
 const router = Router();
 
@@ -32,92 +32,14 @@ router.get('/', async (req, res, next) => {
 // POST /api/admin/notifications/send
 router.post('/send', async (req, res, next) => {
   try {
-    const { title, message, type = 'PROMO', audience = 'all' } = req.body;
-    console.log('[admin-notifications] POST send — audience:', audience, 'type:', type, 'title:', title);
-
-    if (!title || !message) {
-      return next(new AppError('Title and message are required', 400));
-    }
-
-    const validTypes = ['JOB_REQUEST', 'JOB_UPDATE', 'PAYMENT', 'PROMO', 'SYSTEM', 'ALERT'];
-    if (!validTypes.includes(type)) {
-      return next(new AppError(`Invalid type. Must be one of: ${validTypes.join(', ')}`, 400));
-    }
-
-    let whereClause = {};
-    if (audience === 'online') {
-      whereClause = { isOnline: true };
-    }
-
-    const drivers = await prisma.driver.findMany({
-      where: whereClause,
-      select: { id: true, name: true, email: true },
-    });
-    console.log('[admin-notifications] send — audience:', audience, 'drivers targeted:', drivers.length);
-
-    if (drivers.length === 0) {
-      return res.json({ success: true, data: { sent: 0, message: 'No matching drivers found' } });
-    }
-
-    const notifications = await prisma.driverNotification.createMany({
-      data: drivers.map((driver) => ({
-        driverId: driver.id,
-        title,
-        message,
-        type,
-      })),
-    });
-
-    let pushResult = {
-      successCount: 0,
-      failureCount: 0,
-      failedTokens: [],
-      invalidTokens: [],
-      cleanedInvalidTokens: 0,
-      deliveredActorIds: [],
-      failedActorIds: [],
-      noDeviceActorIds: [],
-    };
-    if (drivers.length > 0) {
-      console.log('[admin-notifications] send — sending FCM to', drivers.length, 'drivers');
-      pushResult = await sendPushToDriverIds(
-        drivers.map((driver) => driver.id),
-        { title, body: message },
-        { type, source: 'admin' }
-      );
-      console.log('[admin-notifications] FCM result — successCount:', pushResult.successCount, 'failureCount:', pushResult.failureCount);
-    }
-
-    const deliveredDrivers = drivers
-      .filter((driver) => pushResult.deliveredActorIds.includes(driver.id))
-      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
-    const failedDrivers = drivers
-      .filter((driver) => pushResult.failedActorIds.includes(driver.id))
-      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
-    const noTokenDrivers = drivers
-      .filter((driver) => pushResult.noDeviceActorIds.includes(driver.id))
-      .map((driver) => ({ id: driver.id, name: driver.name, email: driver.email }));
-
     res.json({
       success: true,
-      data: {
-        sent: notifications.count,
-        audience,
-        driversCount: drivers.length,
-        push: {
-          attempted: pushResult.devices?.length || 0,
-          delivered: pushResult.successCount,
-          failed: pushResult.failureCount,
-          invalidTokens: pushResult.invalidTokens.length,
-          cleanedInvalidTokens: pushResult.cleanedInvalidTokens,
-          driversWithoutToken: noTokenDrivers.length,
-          deliveredDrivers,
-          failedDrivers,
-          noTokenDrivers,
-        },
-      },
+      data: await dispatchAdminNotification(req.body, req.adminActor, prisma),
     });
   } catch (err) {
+    if (err.message?.startsWith('Invalid type') || err.message === 'Title and message are required' || err.message === 'Invalid audience') {
+      return next(new AppError(err.message, 400));
+    }
     next(err);
   }
 });
