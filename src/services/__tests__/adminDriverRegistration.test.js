@@ -11,6 +11,23 @@ describe('admin driver registration', () => {
     dateOfBirth: '1990-01-01',
     governmentId: '900101-01-1234',
     addressLine1: '12 Jalan Ampang',
+    driversLicenseNumber: 'D1234567',
+    pdpaConsent: true,
+    backgroundCheckConsent: true,
+    noOffencesDeclared: true,
+    vehicle: {
+      type: 'CAR',
+      make: 'Toyota',
+      model: 'Vios',
+      year: 2022,
+      licensePlate: 'VAB1234',
+    },
+    documents: [
+      {
+        type: 'DRIVERS_LICENSE',
+        imageUrl: 'driver-documents/drivers/driver-1/DRIVERS_LICENSE.jpg',
+      },
+    ],
   };
 
   test('normalizes a valid registration payload', () => {
@@ -50,9 +67,20 @@ describe('admin driver registration', () => {
     const tx = {
       driver: {
         create: jest.fn().mockResolvedValue(createdDriver),
+        findUnique: jest.fn().mockResolvedValue({
+          ...createdDriver,
+          documents: [{ id: 'doc-1', type: 'DRIVERS_LICENSE', status: 'PENDING' }],
+          vehicle: { id: 'vehicle-1', type: 'CAR', make: 'Toyota', model: 'Vios' },
+        }),
       },
       driverWallet: {
         create: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
+      },
+      driverVehicle: {
+        create: jest.fn().mockResolvedValue({ id: 'vehicle-1' }),
+      },
+      driverDocument: {
+        create: jest.fn().mockResolvedValue({ id: 'doc-1' }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -68,7 +96,11 @@ describe('admin driver registration', () => {
       actor: { actorId: 'admin-1', actorType: 'ADMIN' },
     });
 
-    expect(result).toBe(createdDriver);
+    expect(result).toEqual(expect.objectContaining({
+      id: 'driver-1',
+      documents: [{ id: 'doc-1', type: 'DRIVERS_LICENSE', status: 'PENDING' }],
+      vehicle: { id: 'vehicle-1', type: 'CAR', make: 'Toyota', model: 'Vios' },
+    }));
     expect(tx.driver.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         email: 'driver@example.com',
@@ -78,6 +110,12 @@ describe('admin driver registration', () => {
       }),
     }));
     expect(tx.driverWallet.create).toHaveBeenCalledWith({ data: { driverId: 'driver-1' } });
+    expect(tx.driverVehicle.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ driverId: 'driver-1', type: 'CAR', licensePlate: 'VAB1234' }),
+    }));
+    expect(tx.driverDocument.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ driverId: 'driver-1', type: 'DRIVERS_LICENSE', status: 'PENDING' }),
+    }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         actorId: 'admin-1',
