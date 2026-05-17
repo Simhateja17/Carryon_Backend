@@ -14,6 +14,7 @@ const {
 const {
   updateDriverVerificationDecision,
 } = require('../services/adminDriverVerification');
+const { createAdminDriverRegistration } = require('../services/adminDriverRegistration');
 
 const router = Router();
 
@@ -42,6 +43,24 @@ router.get('/onboarding-queue', async (req, res, next) => {
     res.json({
       success: true,
       data: await listDriverReviewCandidates({ db: prisma }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/admin/drivers — create an admin-started driver registration draft
+router.post('/', async (req, res, next) => {
+  try {
+    const driver = await createAdminDriverRegistration({
+      db: prisma,
+      body: req.body,
+      actor: req.adminActor,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: driverListProjection(driver),
     });
   } catch (err) {
     next(err);
