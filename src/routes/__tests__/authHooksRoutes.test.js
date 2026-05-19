@@ -92,7 +92,7 @@ describe('auth hook routes', () => {
     const response = await invokeRoute({ body, ...signed });
 
     expect(response.status).toBe(200);
-    expect(response.body).toBeUndefined();
+    expect(response.body).toEqual({});
     expect(sendAuthOtpSms).toHaveBeenCalledWith(body);
   });
 

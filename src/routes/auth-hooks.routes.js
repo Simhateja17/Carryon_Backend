@@ -22,7 +22,7 @@ router.post('/send-sms', async (req, res) => {
       throw new AppError('Invalid Supabase auth hook payload.', 400);
     }
     await sendAuthOtpSms(req.body);
-    res.status(200).end();
+    res.status(200).json({});
   } catch (err) {
     console.error('[auth-hooks] send-sms failed', {
       statusCode: err.statusCode || 500,
