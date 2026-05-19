@@ -31,7 +31,14 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', {
 }));
 app.use('/api/v1/stripe/webhook', express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
 app.use('/api/stripe/webhook', legacyApiHeaders, express.raw({ type: 'application/json' }), require('./routes/stripe-webhook.routes'));
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({
+  limit: '100kb',
+  verify: (req, _res, buf) => {
+    if (req.originalUrl?.includes('/auth/hooks/send-sms')) {
+      req.rawBody = Buffer.from(buf);
+    }
+  },
+}));
 
 // Rate limiting
 const authLimiter = rateLimit({
@@ -92,6 +99,7 @@ app.get('/health/storage', adminAuth, async (req, res) => {
 // Routes
 console.log('[app] Mounting routes...');
 mountVersionedRoute(app, '/auth', require('./routes/auth.routes'));
+mountVersionedRoute(app, '/auth/hooks', require('./routes/auth-hooks.routes'));
 mountVersionedRoute(app, '/users', require('./routes/user.routes'));
 mountVersionedRoute(app, '/addresses', require('./routes/address.routes'));
 mountVersionedRoute(app, '/bookings', require('./routes/booking.routes'));
