@@ -5,7 +5,8 @@ const PHONE_DIGITS_MIN = 8;
 const PHONE_DIGITS_MAX = 15;
 
 function normalizeEmail(email = '') {
-  return String(email).trim().toLowerCase();
+  if (!email || typeof email !== 'string') return '';
+  return email.trim().toLowerCase();
 }
 
 function normalizePhone(value = '') {

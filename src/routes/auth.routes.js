@@ -10,6 +10,7 @@ const {
   normalizeEmail,
   normalizePhone,
   maskPhone,
+  resolveUniqueByPhone,
   assertUniquePhone,
   sendSmsOtp,
   verifySmsOtp,
@@ -40,15 +41,22 @@ function getSupabaseAuthClient() {
   return _supabaseAuthClient;
 }
 
+function phoneOnlyEmail(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return '';
+  return `phone-${normalized.slice(1)}@phone.carryon.local`;
+}
+
 // POST /api/auth/send-otp — Send OTP via Supabase Auth SMS provider
 router.post('/send-otp', async (req, res, next) => {
   const { mode = 'login' } = req.body;
-  const email = normalizeEmail(req.body.email);
+  let email = normalizeEmail(req.body.email);
   const requestedPhone = normalizePhone(req.body.phone);
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     console.error('[auth] send-otp failed: invalid email payload', {
-      emailProvided: !!email,
+      rawEmail: req.body.email,
+      normalizedEmail: email,
       mode,
       path: req.originalUrl,
       ip: req.ip,
@@ -57,28 +65,32 @@ router.post('/send-otp', async (req, res, next) => {
   }
 
   try {
-    console.log(`[auth] send-otp request for ${maskEmail(email)} (mode=${mode})`);
+    console.log(`[auth] send-otp request for ${email ? maskEmail(email) : maskPhone(requestedPhone)} (mode=${mode})`);
     let phone = requestedPhone;
 
     // Mode-based guards
     if (mode === 'login') {
-      const existingUser = await prisma.user.findUnique({ where: { email } });
+      const existingUser = email
+        ? await prisma.user.findUnique({ where: { email } })
+        : await resolveUniqueByPhone({ prisma, model: 'user', phone });
       if (!existingUser) {
-        console.error(`[auth] send-otp blocked: login requested for unknown user ${maskEmail(email)}`);
-        return next(new AppError('No account found with this email. Please sign up.', 400));
+        console.error(`[auth] send-otp blocked: login requested for unknown user ${email ? maskEmail(email) : maskPhone(phone)}`);
+        return next(new AppError('No account found with this phone number. Please sign up.', 400));
       }
+      email = existingUser.email;
       phone = normalizePhone(existingUser.phone);
       if (!phone) {
         return next(new AppError('This account does not have a valid phone number. Please contact support.', 400));
       }
     } else if (mode === 'signup') {
+      if (!phone) {
+        return next(new AppError('A valid phone number is required.', 400));
+      }
+      if (!email) email = phoneOnlyEmail(phone);
       const existingUser = await prisma.user.findUnique({ where: { email } });
       if (existingUser) {
         console.error(`[auth] send-otp blocked: signup requested for existing user ${maskEmail(email)}`);
-        return next(new AppError('An account with this email already exists. Please log in.', 400));
-      }
-      if (!phone) {
-        return next(new AppError('A valid phone number is required.', 400));
+        return next(new AppError('An account with this phone number already exists. Please log in.', 400));
       }
       await assertUniquePhone({ prisma, model: 'user', phone });
     } else {
@@ -87,7 +99,7 @@ router.post('/send-otp', async (req, res, next) => {
 
     const sent = await sendSmsOtp(phone);
 
-    console.log(`[auth] OTP sent to ${maskEmail(email)} via SMS ${sent.maskedPhone}`);
+    console.log(`[auth] OTP sent to ${email ? maskEmail(email) : 'phone-only account'} via SMS ${sent.maskedPhone}`);
     res.json({ success: true, message: 'OTP sent successfully.', maskedPhone: sent.maskedPhone });
   } catch (err) {
     console.error('[auth] send-otp failed: unexpected error', {
@@ -103,18 +115,22 @@ router.post('/send-otp', async (req, res, next) => {
 // POST /api/auth/verify-otp — Verify OTP via Supabase Auth SMS provider
 router.post('/verify-otp', async (req, res, next) => {
   const { otp, mode = 'login', name = '' } = req.body;
-  const email = normalizeEmail(req.body.email);
+  let email = normalizeEmail(req.body.email);
   const requestedPhone = normalizePhone(req.body.phone);
 
-  if (!email || !otp) {
+  if (!otp) {
     console.error('[auth] verify-otp failed: missing required fields', {
       emailProvided: !!email,
+      phoneProvided: !!requestedPhone,
       otpProvided: !!otp,
       mode,
       path: req.originalUrl,
       ip: req.ip,
     });
-    return next(new AppError('Email and OTP are required.', 400));
+    return next(new AppError('Phone number and OTP are required.', 400));
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return next(new AppError('A valid email address is required.', 400));
   }
   if (!isValidOtp(otp)) {
     return next(new AppError(`OTP must be ${OTP_LENGTH} digits.`, 400));
@@ -126,15 +142,19 @@ router.post('/verify-otp', async (req, res, next) => {
     let phone = requestedPhone;
 
     if (mode === 'login') {
-      const existingUser = await prisma.user.findUnique({ where: { email } });
+      const existingUser = email
+        ? await prisma.user.findUnique({ where: { email } })
+        : await resolveUniqueByPhone({ prisma, model: 'user', phone });
       if (!existingUser) {
-        return next(new AppError('No account found with this email. Please sign up.', 400));
+        return next(new AppError('No account found with this phone number. Please sign up.', 400));
       }
+      email = existingUser.email;
       phone = normalizePhone(existingUser.phone);
     } else if (mode === 'signup') {
       if (!phone) {
         return next(new AppError('A valid phone number is required.', 400));
       }
+      if (!email) email = phoneOnlyEmail(phone);
       await assertUniquePhone({ prisma, model: 'user', phone, excludingEmail: email });
     } else {
       return next(new AppError('Invalid OTP mode.', 400));

@@ -10,6 +10,7 @@ const {
   normalizeEmail,
   normalizePhone,
   maskPhone,
+  resolveUniqueByPhone,
   assertUniquePhone,
   sendSmsOtp,
   verifySmsOtp,
@@ -17,34 +18,48 @@ const {
 
 const router = Router();
 
+function phoneOnlyEmail(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return '';
+  return `driver-phone-${normalized.slice(1)}@phone.carryon.local`;
+}
+
 // POST /api/driver/auth/send-otp — Send driver login/signup OTP by SMS
 router.post('/send-otp', async (req, res, next) => {
-  const email = normalizeEmail(req.body.email);
+  let email = normalizeEmail(req.body.email);
   const mode = req.body.mode || 'login';
   const requestedPhone = normalizePhone(req.body.phone);
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    console.error('[driver-auth] send-otp failed: invalid email payload', {
+      rawEmail: req.body.email,
+      normalizedEmail: email,
+    });
     return next(new AppError('A valid email address is required.', 400));
   }
 
   try {
     let phone = requestedPhone;
     if (mode === 'login') {
-      const driver = await prisma.driver.findUnique({ where: { email } });
+      const driver = email
+        ? await prisma.driver.findUnique({ where: { email } })
+        : await resolveUniqueByPhone({ prisma, model: 'driver', phone });
       if (!driver) {
-        return next(new AppError('No driver account found with this email. Please sign up.', 400));
+        return next(new AppError('No driver account found with this phone number. Please sign up.', 400));
       }
+      email = driver.email;
       phone = normalizePhone(driver.phone);
       if (!phone) {
         return next(new AppError('This driver account does not have a valid phone number. Please contact support.', 400));
       }
     } else if (mode === 'signup') {
-      const existingDriver = await prisma.driver.findUnique({ where: { email } });
-      if (existingDriver) {
-        return next(new AppError('A driver account with this email already exists. Please log in.', 400));
-      }
       if (!phone) {
         return next(new AppError('A valid phone number is required.', 400));
+      }
+      if (!email) email = phoneOnlyEmail(phone);
+      const existingDriver = await prisma.driver.findUnique({ where: { email } });
+      if (existingDriver) {
+        return next(new AppError('A driver account with this phone number already exists. Please log in.', 400));
       }
       await assertUniquePhone({ prisma, model: 'driver', phone });
     } else {
@@ -66,15 +81,18 @@ router.post('/send-otp', async (req, res, next) => {
 
 // POST /api/driver/auth/verify-otp — Verify driver SMS OTP and sync/register Driver
 router.post('/verify-otp', async (req, res, next) => {
-  const email = normalizeEmail(req.body.email);
+  let email = normalizeEmail(req.body.email);
   const mode = req.body.mode || 'login';
   const requestedPhone = normalizePhone(req.body.phone);
   const { otp, name = '', emergencyContact = '' } = req.body;
   const requestedLanguage = req.body?.language ?? req.body?.preferredLanguage;
   const language = requestedLanguage !== undefined ? normalizeLanguageCode(requestedLanguage) : undefined;
 
-  if (!email || !otp) {
-    return next(new AppError('Email and OTP are required.', 400));
+  if (!otp) {
+    return next(new AppError('Phone number and OTP are required.', 400));
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return next(new AppError('A valid email address is required.', 400));
   }
   if (!isValidOtp(otp)) {
     return next(new AppError(`OTP must be ${OTP_LENGTH} digits.`, 400));
@@ -83,15 +101,19 @@ router.post('/verify-otp', async (req, res, next) => {
   try {
     let phone = requestedPhone;
     if (mode === 'login') {
-      const existingDriver = await prisma.driver.findUnique({ where: { email } });
+      const existingDriver = email
+        ? await prisma.driver.findUnique({ where: { email } })
+        : await resolveUniqueByPhone({ prisma, model: 'driver', phone });
       if (!existingDriver) {
-        return next(new AppError('No driver account found with this email. Please sign up.', 400));
+        return next(new AppError('No driver account found with this phone number. Please sign up.', 400));
       }
+      email = existingDriver.email;
       phone = normalizePhone(existingDriver.phone);
     } else if (mode === 'signup') {
       if (!phone) {
         return next(new AppError('A valid phone number is required.', 400));
       }
+      if (!email) email = phoneOnlyEmail(phone);
       await assertUniquePhone({ prisma, model: 'driver', phone, excludingEmail: email });
     } else {
       return next(new AppError('Invalid OTP mode.', 400));
