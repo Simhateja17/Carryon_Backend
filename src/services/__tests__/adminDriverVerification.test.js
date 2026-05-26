@@ -76,6 +76,11 @@ describe('admin driver verification decisions', () => {
     });
 
     expect(result.isVerified).toBe(true);
+    expect(db.driver.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        documents: { select: { id: true, type: true, status: true } },
+      }),
+    }));
     expect(tx.driver.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         verificationStatus: 'APPROVED',

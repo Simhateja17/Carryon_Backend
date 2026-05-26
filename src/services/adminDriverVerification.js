@@ -8,7 +8,7 @@ const {
 const VERIFICATION_DECISIONS = new Set(['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED']);
 
 const DRIVER_DECISION_INCLUDE = {
-  documents: { select: { id: true, status: true } },
+  documents: { select: { id: true, type: true, status: true } },
   vehicle: { select: { id: true } },
 };
 
