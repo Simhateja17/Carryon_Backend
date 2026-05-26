@@ -187,7 +187,7 @@ docker run --rm \
 ## 9. Recommended hardening
 
 - Keep `5678` bound to localhost only (`127.0.0.1:5678:5678`)
-- Use strong values for:
+- Use strong values for: //hi
   - `N8N_ENCRYPTION_KEY`
   - `N8N_BASIC_AUTH_PASSWORD`
 - Restrict SSH access (disable password auth, use keys)
