@@ -11,6 +11,7 @@ describe('driverEligibility', () => {
     const eligibility = evaluateDriverEligibility({
       isVerified: true,
       verificationStatus: 'APPROVED',
+      stripePayoutsEnabled: true,
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
       ],
@@ -29,6 +30,7 @@ describe('driverEligibility', () => {
     const eligibility = evaluateDriverEligibility({
       isVerified: true,
       verificationStatus: 'APPROVED',
+      stripePayoutsEnabled: true,
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
         { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2026-05-07' },
@@ -46,6 +48,7 @@ describe('driverEligibility', () => {
     const eligibility = evaluateDriverEligibility({
       isVerified: true,
       verificationStatus: 'APPROVED',
+      stripePayoutsEnabled: true,
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
         { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
@@ -56,6 +59,30 @@ describe('driverEligibility', () => {
     }, now);
 
     expect(eligibility.canGoOnline).toBe(true);
+  });
+
+  test('blocks verified drivers until Stripe payouts are enabled', () => {
+    const eligibility = evaluateDriverEligibility({
+      isVerified: true,
+      verificationStatus: 'APPROVED',
+      stripePayoutsEnabled: false,
+      stripeConnectAccountId: 'acct_123',
+      stripeDetailsSubmitted: true,
+      documents: [
+        { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'VEHICLE_REGISTRATION', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'VEHICLE_PHOTO_FRONT', status: 'APPROVED' },
+        { type: 'VEHICLE_PHOTO_BACK', status: 'APPROVED' },
+      ],
+    }, now);
+
+    expect(eligibility.canGoOnline).toBe(false);
+    expect(eligibility.payoutRequirements).toMatchObject({
+      stripeAccountId: 'acct_123',
+      detailsSubmitted: true,
+      payoutsEnabled: false,
+    });
   });
 
   test('detects expiry reminders by days remaining', () => {

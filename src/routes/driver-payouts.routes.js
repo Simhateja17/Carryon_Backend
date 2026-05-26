@@ -2,8 +2,8 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
-const { getStripe, stripeCurrency } = require('../lib/stripe');
-const { toMinorUnits, fromMinorUnits } = require('../lib/money');
+const { getStripe, isStripeLiveMode, stripeCurrency } = require('../lib/stripe');
+const { calculateDriverWithdrawal } = require('../lib/driverPayoutFees');
 const { parseBody } = require('../lib/validation');
 const { driverWithdrawSchema } = require('../validation/financialSchemas');
 
@@ -17,6 +17,12 @@ function requirementsPayload(account) {
     pastDue: account.requirements?.past_due || [],
     disabledReason: account.requirements?.disabled_reason || null,
   };
+}
+
+function assertDriverPayoutsCanUseStripe() {
+  if (isStripeLiveMode() && process.env.ALLOW_LIVE_DRIVER_PAYOUTS !== 'true') {
+    throw new AppError('Driver payouts are locked to Stripe test mode until ALLOW_LIVE_DRIVER_PAYOUTS=true', 403);
+  }
 }
 
 async function syncDriverAccountStatus(driverId, account) {
@@ -40,10 +46,15 @@ async function ensureAccount(driver) {
   }
 
   const account = await stripe.accounts.create({
-    type: 'express',
     country: process.env.STRIPE_CONNECT_COUNTRY || 'MY',
     email: driver.email || undefined,
     business_type: 'individual',
+    controller: {
+      fees: { payer: 'account' },
+      losses: { payments: 'application' },
+      stripe_dashboard: { type: 'express' },
+      requirement_collection: 'stripe',
+    },
     capabilities: {
       transfers: { requested: true },
     },
@@ -57,6 +68,7 @@ async function ensureAccount(driver) {
 
 router.post('/account', async (req, res, next) => {
   try {
+    assertDriverPayoutsCanUseStripe();
     const account = await ensureAccount(req.driver);
     res.json({
       success: true,
@@ -65,6 +77,9 @@ router.post('/account', async (req, res, next) => {
         detailsSubmitted: !!account.details_submitted,
         payoutsEnabled: !!account.payouts_enabled,
         requirements: requirementsPayload(account),
+        minimumWithdrawalAmount: calculateDriverWithdrawal(0).minimumAmount,
+        withdrawalFeeFlat: Number(process.env.DRIVER_WITHDRAWAL_FEE_FLAT || 0),
+        withdrawalFeeRate: Number(process.env.DRIVER_WITHDRAWAL_FEE_RATE || 0),
       },
     });
   } catch (err) {
@@ -74,6 +89,7 @@ router.post('/account', async (req, res, next) => {
 
 router.post('/onboarding-link', async (req, res, next) => {
   try {
+    assertDriverPayoutsCanUseStripe();
     const stripe = getStripe();
     const account = await ensureAccount(req.driver);
     const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL || 'carryon-driver://stripe-connect/return';
@@ -104,6 +120,10 @@ router.get('/status', async (req, res, next) => {
         detailsSubmitted: !!account?.details_submitted || !!req.driver.stripeDetailsSubmitted,
         payoutsEnabled: !!account?.payouts_enabled || !!req.driver.stripePayoutsEnabled,
         requirements: account ? requirementsPayload(account) : (req.driver.stripeRequirements || null),
+        minimumWithdrawalAmount: calculateDriverWithdrawal(0).minimumAmount,
+        withdrawalFeeFlat: Number(process.env.DRIVER_WITHDRAWAL_FEE_FLAT || 0),
+        withdrawalFeeRate: Number(process.env.DRIVER_WITHDRAWAL_FEE_RATE || 0),
+        testModeOnly: process.env.ALLOW_LIVE_DRIVER_PAYOUTS !== 'true',
       },
     });
   } catch (err) {
@@ -113,8 +133,15 @@ router.get('/status', async (req, res, next) => {
 
 router.post('/withdraw', async (req, res, next) => {
   try {
+    assertDriverPayoutsCanUseStripe();
     const { amount: requestedAmount } = parseBody(driverWithdrawSchema, req.body);
-    const amountMinor = toMinorUnits(requestedAmount);
+    const withdrawal = calculateDriverWithdrawal(requestedAmount);
+    if (withdrawal.requestedMinor < withdrawal.minimumMinor) {
+      return next(new AppError(`Minimum withdrawal is RM ${withdrawal.minimumAmount.toFixed(2)}`, 400));
+    }
+    if (withdrawal.transferMinor <= 0) {
+      return next(new AppError('Withdrawal amount must exceed the payout fee', 400));
+    }
 
     const driver = await prisma.driver.findUnique({ where: { id: req.driver.id } });
     if (!driver?.stripeConnectAccountId) {
@@ -129,7 +156,7 @@ router.post('/withdraw', async (req, res, next) => {
     }
 
     const wallet = await prisma.driverWallet.findUnique({ where: { driverId: driver.id } });
-    const amount = fromMinorUnits(amountMinor);
+    const amount = withdrawal.requestedAmount;
     if (!wallet || wallet.balance < amount) {
       return next(new AppError('Insufficient balance', 400));
     }
@@ -146,7 +173,7 @@ router.post('/withdraw', async (req, res, next) => {
           driverId: driver.id,
           walletId: latestWallet.id,
           amount,
-          amountMinor,
+          amountMinor: withdrawal.transferMinor,
           currency,
           status: 'PENDING',
         },
@@ -162,7 +189,11 @@ router.post('/withdraw', async (req, res, next) => {
           walletId: latestWallet.id,
           type: 'WITHDRAWAL',
           amount: -amount,
-          description: `Stripe withdrawal of RM ${amount.toFixed(2)}`,
+          grossAmount: withdrawal.requestedAmount,
+          platformFeeAmount: withdrawal.feeAmount,
+          description: withdrawal.feeMinor > 0
+            ? `Stripe withdrawal of RM ${withdrawal.transferAmount.toFixed(2)} after RM ${withdrawal.feeAmount.toFixed(2)} fee`
+            : `Stripe withdrawal of RM ${amount.toFixed(2)}`,
           status: 'PENDING',
         },
       });
@@ -173,13 +204,16 @@ router.post('/withdraw', async (req, res, next) => {
     let transfer;
     try {
       transfer = await stripe.transfers.create({
-        amount: amountMinor,
+        amount: withdrawal.transferMinor,
         currency,
         destination: account.id,
         metadata: {
           driverId: driver.id,
           payoutId: result.pending.id,
           transactionId: result.transaction.id,
+          requestedAmountMinor: String(withdrawal.requestedMinor),
+          feeAmountMinor: String(withdrawal.feeMinor),
+          transferAmountMinor: String(withdrawal.transferMinor),
         },
       }, {
         idempotencyKey: `driver-withdrawal-${result.pending.id}`,
@@ -224,7 +258,16 @@ router.post('/withdraw', async (req, res, next) => {
       return transaction;
     });
 
-    res.json({ success: true, data: updatedTransaction });
+    res.json({
+      success: true,
+      data: {
+        ...updatedTransaction,
+        requestedAmount: withdrawal.requestedAmount,
+        feeAmount: withdrawal.feeAmount,
+        transferAmount: withdrawal.transferAmount,
+        currency,
+      },
+    });
   } catch (err) {
     next(err);
   }

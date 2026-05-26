@@ -48,6 +48,7 @@ describe('Driver Online Time', () => {
           id: 'driver-1',
           isVerified: true,
           verificationStatus: 'APPROVED',
+          stripePayoutsEnabled: true,
           documents: [
             { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
             { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
@@ -91,6 +92,7 @@ describe('Driver Online Time', () => {
           id: 'driver-1',
           isVerified: true,
           verificationStatus: 'APPROVED',
+          stripePayoutsEnabled: true,
           currentLatitude: 0,
           currentLongitude: 0,
           documents: [

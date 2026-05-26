@@ -2,6 +2,7 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { parsePagination } = require('../lib/pagination');
+const { calculateDriverWithdrawal } = require('../lib/driverPayoutFees');
 const { onlineHoursForWindow } = require('../services/driverOnlineTime');
 
 const router = Router();
@@ -105,6 +106,9 @@ router.get('/wallet', async (req, res, next) => {
         stripeDetailsSubmitted: !!req.driver.stripeDetailsSubmitted,
         stripePayoutsEnabled: !!req.driver.stripePayoutsEnabled,
         stripeRequirements: req.driver.stripeRequirements || null,
+        minimumWithdrawalAmount: calculateDriverWithdrawal(0).minimumAmount,
+        withdrawalFeeFlat: Number(process.env.DRIVER_WITHDRAWAL_FEE_FLAT || 0),
+        withdrawalFeeRate: Number(process.env.DRIVER_WITHDRAWAL_FEE_RATE || 0),
       },
     });
   } catch (err) {

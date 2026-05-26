@@ -20,8 +20,40 @@ async function markTopUp(tx, paymentIntent, status, failureMessage = null) {
   });
 }
 
+function accountRequirements(account) {
+  return {
+    currentlyDue: account.requirements?.currently_due || [],
+    eventuallyDue: account.requirements?.eventually_due || [],
+    pastDue: account.requirements?.past_due || [],
+    disabledReason: account.requirements?.disabled_reason || null,
+  };
+}
+
+async function syncConnectedAccount(tx, account) {
+  if (!account?.id) return;
+  await tx.driver.updateMany({
+    where: { stripeConnectAccountId: account.id },
+    data: {
+      stripeDetailsSubmitted: !!account.details_submitted,
+      stripePayoutsEnabled: !!account.payouts_enabled,
+      stripeRequirements: accountRequirements(account),
+    },
+  });
+}
+
 async function handleStripeEvent(tx, event) {
   switch (event.type) {
+    case 'account.updated':
+      await syncConnectedAccount(tx, event.data.object);
+      break;
+    case 'account.external_account.updated':
+      if (event.account) {
+        await tx.driver.updateMany({
+          where: { stripeConnectAccountId: event.account },
+          data: { stripePayoutsEnabled: false },
+        });
+      }
+      break;
     case 'payment_intent.succeeded':
       await creditWalletForTopUp(tx, event.data.object);
       break;
@@ -46,4 +78,4 @@ async function handleStripeEvent(tx, event) {
   }
 }
 
-module.exports = { handleStripeEvent };
+module.exports = { handleStripeEvent, syncConnectedAccount };

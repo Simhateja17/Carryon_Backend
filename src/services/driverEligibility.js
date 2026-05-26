@@ -51,10 +51,17 @@ function evaluateDriverEligibility(driver, now = new Date()) {
     canGoOnline:
       driver?.isVerified === true &&
       driver?.verificationStatus === 'APPROVED' &&
+      driver?.stripePayoutsEnabled === true &&
       missingRequiredDocuments.length === 0 &&
       expiredDocuments.length === 0,
     missingRequiredDocuments,
     expiredDocuments,
+    payoutRequirements: {
+      stripeAccountId: driver?.stripeConnectAccountId || null,
+      detailsSubmitted: driver?.stripeDetailsSubmitted === true,
+      payoutsEnabled: driver?.stripePayoutsEnabled === true,
+      requirements: driver?.stripeRequirements || null,
+    },
   };
 }
 
@@ -82,7 +89,7 @@ async function assertDriverCanGoOnline(
   });
   const eligibility = evaluateDriverEligibility(driver, now);
   if (!eligibility.canGoOnline) {
-    const err = new Error('Driver cannot go online until required documents are approved and unexpired.');
+    const err = new Error('Driver cannot go online until required documents are approved, unexpired, and Stripe payouts are enabled.');
     err.statusCode = 403;
     err.details = eligibility;
     throw err;
