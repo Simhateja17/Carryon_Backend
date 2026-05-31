@@ -52,7 +52,7 @@ function buildEligibilityBlockers(driver, missingRequiredDocuments, expiredDocum
       message: `${documentLabel(type)} has expired and must be renewed before the driver can go online.`,
     });
   }
-  if (driver?.stripePayoutsEnabled !== true) {
+  if (driverOnlineRequiresStripePayouts() && driver?.stripePayoutsEnabled !== true) {
     blockers.push({
       code: 'STRIPE_PAYOUTS_DISABLED',
       message: driver?.stripeConnectAccountId
@@ -61,6 +61,10 @@ function buildEligibilityBlockers(driver, missingRequiredDocuments, expiredDocum
     });
   }
   return blockers;
+}
+
+function driverOnlineRequiresStripePayouts() {
+  return process.env.DRIVER_ONLINE_REQUIRES_STRIPE_PAYOUTS !== 'false';
 }
 
 function readinessStatusFor(blockers) {
@@ -234,6 +238,7 @@ module.exports = {
   assertDriverCanGoOnline,
   buildEligibilityBlockers,
   documentExpiryReminderDays,
+  driverOnlineRequiresStripePayouts,
   evaluateDriverEligibility,
   isExpiredDocument,
   normalizeEligibilityLocation,

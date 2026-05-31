@@ -6,6 +6,11 @@ const {
 
 describe('driverEligibility', () => {
   const now = new Date('2026-05-08T00:00:00.000Z');
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
 
   test('blocks drivers missing required approved documents', () => {
     const eligibility = evaluateDriverEligibility({
@@ -87,6 +92,27 @@ describe('driverEligibility', () => {
       detailsSubmitted: true,
       payoutsEnabled: false,
     });
+  });
+
+  test('can allow approved drivers online without Stripe payouts when review override is enabled', () => {
+    process.env.DRIVER_ONLINE_REQUIRES_STRIPE_PAYOUTS = 'false';
+
+    const eligibility = evaluateDriverEligibility({
+      isVerified: true,
+      verificationStatus: 'APPROVED',
+      stripePayoutsEnabled: false,
+      documents: [
+        { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'VEHICLE_REGISTRATION', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { type: 'VEHICLE_PHOTO_FRONT', status: 'APPROVED' },
+        { type: 'VEHICLE_PHOTO_BACK', status: 'APPROVED' },
+      ],
+    }, now);
+
+    expect(eligibility.canGoOnline).toBe(true);
+    expect(eligibility.status).toBe('READY_TO_GO_ONLINE');
+    expect(eligibility.payoutRequirements.payoutsEnabled).toBe(false);
   });
 
   test('returns readiness blockers for admin review', () => {
