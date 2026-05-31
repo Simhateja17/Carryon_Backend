@@ -17,6 +17,23 @@ jest.mock('../../lib/pushNotifications', () => ({
 const prisma = require('../../lib/prisma');
 const { getIncomingBookingsForDriver, selectEligibleDriversForBooking } = require('../dispatch');
 
+function dispatchReadyDriver(overrides = {}) {
+  return {
+    isOnline: true,
+    isVerified: true,
+    verificationStatus: 'APPROVED',
+    stripePayoutsEnabled: true,
+    documents: [
+      { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+      { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
+      { type: 'VEHICLE_REGISTRATION', status: 'APPROVED' },
+      { type: 'VEHICLE_PHOTO_FRONT', status: 'APPROVED' },
+      { type: 'VEHICLE_PHOTO_BACK', status: 'APPROVED' },
+    ],
+    ...overrides,
+  };
+}
+
 describe('Dispatch — incoming jobs', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -87,34 +104,38 @@ describe('Dispatch — incoming jobs', () => {
       pickupAddress: { latitude: 3.1, longitude: 101.6 },
     };
     const drivers = [
-      {
+      dispatchReadyDriver({
         id: 'eligible-1',
-        isOnline: true,
         currentLatitude: 3.1001,
         currentLongitude: 101.6001,
         vehicle: { type: 'CAR' },
-      },
-      {
+      }),
+      dispatchReadyDriver({
         id: 'wrong-vehicle',
-        isOnline: true,
         currentLatitude: 3.1001,
         currentLongitude: 101.6001,
         vehicle: { type: 'BIKE' },
-      },
-      {
+      }),
+      dispatchReadyDriver({
         id: 'offline',
         isOnline: false,
         currentLatitude: 3.1001,
         currentLongitude: 101.6001,
         vehicle: { type: 'CAR' },
-      },
-      {
+      }),
+      dispatchReadyDriver({
         id: 'far-away',
-        isOnline: true,
         currentLatitude: 4.1,
         currentLongitude: 102.6,
         vehicle: { type: 'CAR' },
-      },
+      }),
+      dispatchReadyDriver({
+        id: 'payout-blocked',
+        stripePayoutsEnabled: false,
+        currentLatitude: 3.1001,
+        currentLongitude: 101.6001,
+        vehicle: { type: 'CAR' },
+      }),
     ];
 
     expect(selectEligibleDriversForBooking(booking, drivers).map((driver) => driver.id)).toEqual(['eligible-1']);

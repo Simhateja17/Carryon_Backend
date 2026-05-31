@@ -78,11 +78,37 @@ describe('driverEligibility', () => {
     }, now);
 
     expect(eligibility.canGoOnline).toBe(false);
+    expect(eligibility.status).toBe('PAYOUT_SETUP_REQUIRED');
+    expect(eligibility.primaryBlocker).toMatchObject({
+      code: 'STRIPE_PAYOUTS_DISABLED',
+    });
     expect(eligibility.payoutRequirements).toMatchObject({
       stripeAccountId: 'acct_123',
       detailsSubmitted: true,
       payoutsEnabled: false,
     });
+  });
+
+  test('returns readiness blockers for admin review', () => {
+    const eligibility = evaluateDriverEligibility({
+      isVerified: false,
+      verificationStatus: 'IN_REVIEW',
+      stripePayoutsEnabled: false,
+      documents: [],
+    }, now);
+
+    expect(eligibility.canGoOnline).toBe(false);
+    expect(eligibility.status).toBe('ADMIN_REVIEW_REQUIRED');
+    expect(eligibility.label).toBe('Admin review required');
+    expect(eligibility.blockers.map((blocker) => blocker.code)).toEqual([
+      'ADMIN_APPROVAL_REQUIRED',
+      'REQUIRED_DOCUMENT_MISSING',
+      'REQUIRED_DOCUMENT_MISSING',
+      'REQUIRED_DOCUMENT_MISSING',
+      'REQUIRED_DOCUMENT_MISSING',
+      'REQUIRED_DOCUMENT_MISSING',
+      'STRIPE_PAYOUTS_DISABLED',
+    ]);
   });
 
   test('detects expiry reminders by days remaining', () => {

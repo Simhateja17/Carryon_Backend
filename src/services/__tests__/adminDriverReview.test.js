@@ -20,6 +20,10 @@ function driver(overrides = {}) {
     rating: 0,
     totalTrips: 0,
     emergencyContact: '',
+    stripeConnectAccountId: null,
+    stripeDetailsSubmitted: false,
+    stripePayoutsEnabled: false,
+    stripeRequirements: null,
     createdAt: new Date('2026-05-10T00:00:00Z'),
     onboardingSubmittedAt: null,
     documents: [
@@ -57,7 +61,31 @@ describe('admin driver review read model', () => {
       documentsApproved: 1,
       documentsPending: 1,
       reviewSource: 'LEGACY_UNVERIFIED',
+      onlineReadiness: expect.objectContaining({
+        canGoOnline: false,
+        status: 'ADMIN_REVIEW_REQUIRED',
+      }),
     }));
+  });
+
+  test('list projection exposes payout setup blocker for approved existing drivers', () => {
+    const projected = driverListProjection(driver({
+      isVerified: true,
+      verificationStatus: 'APPROVED',
+      documents: [
+        { id: 'doc-1', type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { id: 'doc-2', type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
+        { id: 'doc-3', type: 'VEHICLE_REGISTRATION', status: 'APPROVED' },
+        { id: 'doc-4', type: 'VEHICLE_PHOTO_FRONT', status: 'APPROVED' },
+        { id: 'doc-5', type: 'VEHICLE_PHOTO_BACK', status: 'APPROVED' },
+      ],
+    }));
+
+    expect(projected.onlineReadiness).toMatchObject({
+      canGoOnline: false,
+      status: 'PAYOUT_SETUP_REQUIRED',
+      primaryBlocker: { code: 'STRIPE_PAYOUTS_DISABLED' },
+    });
   });
 
   test('submitted drivers are marked as submitted onboarding review source', () => {

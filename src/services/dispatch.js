@@ -7,6 +7,24 @@ const { haversineKm } = require('../lib/distance');
 const { driverEarningFromGross } = require('../lib/money');
 const { sendPushToDriverIds } = require('../lib/pushNotifications');
 const { DRIVER_SEARCH_RADIUS_KM, OFFER_EXPIRY_MS } = require('./businessConfig');
+const { evaluateDriverEligibility } = require('./driverEligibility');
+
+const DRIVER_DISPATCH_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  isOnline: true,
+  isVerified: true,
+  verificationStatus: true,
+  stripeConnectAccountId: true,
+  stripeDetailsSubmitted: true,
+  stripePayoutsEnabled: true,
+  stripeRequirements: true,
+  currentLatitude: true,
+  currentLongitude: true,
+  documents: { select: { type: true, status: true, expiryDate: true } },
+  vehicle: { select: { type: true } },
+};
 
 // ── Incoming job queries for driver app ─────────────────────
 
@@ -54,7 +72,7 @@ function selectEligibleDriversForBooking(booking, drivers) {
     const withinRadius =
       haversineKm(pickupLat, pickupLng, driver.currentLatitude, driver.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
     const vehicleMatches = !bookingVehicleType || !driver.vehicle?.type || driver.vehicle.type === bookingVehicleType;
-    return driver.isOnline !== false && withinRadius && vehicleMatches;
+    return driver.isOnline !== false && evaluateDriverEligibility(driver).canGoOnline && withinRadius && vehicleMatches;
   });
 }
 
@@ -130,13 +148,7 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
 async function notifyNearbyDrivers(booking) {
   const drivers = await prisma.driver.findMany({
     where: { isOnline: true },
-    select: {
-      id: true,
-      name: true,
-      currentLatitude: true,
-      currentLongitude: true,
-      vehicle: { select: { type: true } },
-    },
+    select: DRIVER_DISPATCH_SELECT,
   });
 
   const bookingVehicleType = booking.vehicleType;
@@ -179,18 +191,11 @@ async function notifyDriversForAdminBooking(booking, driverIds) {
 
   const candidateDrivers = await prisma.driver.findMany({
     where: driverWhere,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      currentLatitude: true,
-      currentLongitude: true,
-      vehicle: { select: { type: true } },
-    },
+    select: DRIVER_DISPATCH_SELECT,
   });
 
   const nearbyDrivers = isDirectTargeted
-    ? candidateDrivers
+    ? candidateDrivers.filter((driver) => driver.isOnline !== false && evaluateDriverEligibility(driver).canGoOnline)
     : selectEligibleDriversForBooking(booking, candidateDrivers);
 
   const targetedDrivers = nearbyDrivers.map((d) => ({
@@ -246,6 +251,7 @@ async function notifyDriversForAdminBooking(booking, driverIds) {
 }
 
 module.exports = {
+  DRIVER_DISPATCH_SELECT,
   getIncomingBookingsForDriver,
   notifyNearbyDrivers,
   notifyDriversForAdminBooking,

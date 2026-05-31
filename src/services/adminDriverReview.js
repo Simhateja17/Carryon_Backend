@@ -1,4 +1,5 @@
 const { getSignedUrl } = require('../lib/supabase');
+const { evaluateDriverEligibility } = require('./driverEligibility');
 
 const REVIEWABLE_VERIFICATION_STATUSES = ['PENDING', 'IN_REVIEW'];
 
@@ -15,7 +16,7 @@ const PII_FIELDS = new Set([
 ]);
 
 const DRIVER_REVIEW_INCLUDE = {
-  documents: { select: { id: true, type: true, status: true } },
+  documents: { select: { id: true, type: true, status: true, expiryDate: true } },
   vehicle: { select: { id: true, type: true, make: true, model: true } },
   pushDevices: {
     where: { notificationsEnabled: true },
@@ -61,6 +62,7 @@ function maskedField(value) {
 }
 
 function driverListProjection(driver) {
+  const onlineReadiness = evaluateDriverEligibility(driver);
   return {
     id: driver.id,
     name: driver.name,
@@ -87,6 +89,7 @@ function driverListProjection(driver) {
       ? `${driver.vehicle.type} — ${driver.vehicle.make} ${driver.vehicle.model}`.trim()
       : null,
     reviewSource: driver.onboardingSubmittedAt ? 'SUBMITTED_ONBOARDING' : 'LEGACY_UNVERIFIED',
+    onlineReadiness,
   };
 }
 
@@ -106,6 +109,7 @@ async function signDriverDocuments(driver, { sign = getSignedUrl } = {}) {
 
 function detailProjection(driver) {
   const latestSubmission = driver.onboardingSubmissions?.[0] || null;
+  const onlineReadiness = evaluateDriverEligibility(driver);
   return {
     id: driver.id,
     name: driver.name,
@@ -124,6 +128,8 @@ function detailProjection(driver) {
     createdAt: driver.createdAt,
     onboardingSubmittedAt: driver.onboardingSubmittedAt,
     reviewSource: driver.onboardingSubmittedAt ? 'SUBMITTED_ONBOARDING' : 'LEGACY_UNVERIFIED',
+    onlineReadiness,
+    payout: onlineReadiness.payoutRequirements,
     profile: {
       dateOfBirth: driver.dateOfBirth,
       gender: driver.gender,

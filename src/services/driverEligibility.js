@@ -26,6 +26,70 @@ function documentExpiryReminderDays(document, now = new Date()) {
   return Math.ceil(msRemaining / (24 * 60 * 60 * 1000));
 }
 
+function documentLabel(type) {
+  return String(type || '').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildEligibilityBlockers(driver, missingRequiredDocuments, expiredDocuments) {
+  const blockers = [];
+  if (driver?.isVerified !== true || driver?.verificationStatus !== 'APPROVED') {
+    blockers.push({
+      code: 'ADMIN_APPROVAL_REQUIRED',
+      message: 'Admin approval is required before the driver can go online.',
+    });
+  }
+  for (const type of missingRequiredDocuments) {
+    blockers.push({
+      code: 'REQUIRED_DOCUMENT_MISSING',
+      documentType: type,
+      message: `${documentLabel(type)} must be approved before the driver can go online.`,
+    });
+  }
+  for (const type of expiredDocuments) {
+    blockers.push({
+      code: 'REQUIRED_DOCUMENT_EXPIRED',
+      documentType: type,
+      message: `${documentLabel(type)} has expired and must be renewed before the driver can go online.`,
+    });
+  }
+  if (driver?.stripePayoutsEnabled !== true) {
+    blockers.push({
+      code: 'STRIPE_PAYOUTS_DISABLED',
+      message: driver?.stripeConnectAccountId
+        ? 'Stripe payout setup is incomplete or payouts are disabled.'
+        : 'Driver must complete Stripe payout setup before going online.',
+    });
+  }
+  return blockers;
+}
+
+function readinessStatusFor(blockers) {
+  if (blockers.length === 0) return 'READY_TO_GO_ONLINE';
+  const codes = new Set(blockers.map((blocker) => blocker.code));
+  if (codes.has('ADMIN_APPROVAL_REQUIRED')) return 'ADMIN_REVIEW_REQUIRED';
+  if (codes.has('REQUIRED_DOCUMENT_EXPIRED')) return 'DOCUMENTS_EXPIRED';
+  if (codes.has('REQUIRED_DOCUMENT_MISSING')) return 'DOCUMENTS_REQUIRED';
+  if (codes.has('STRIPE_PAYOUTS_DISABLED')) return 'PAYOUT_SETUP_REQUIRED';
+  return 'NOT_READY';
+}
+
+function readinessLabelFor(status) {
+  switch (status) {
+    case 'READY_TO_GO_ONLINE':
+      return 'Ready to go online';
+    case 'ADMIN_REVIEW_REQUIRED':
+      return 'Admin review required';
+    case 'DOCUMENTS_EXPIRED':
+      return 'Document expired';
+    case 'DOCUMENTS_REQUIRED':
+      return 'Documents required';
+    case 'PAYOUT_SETUP_REQUIRED':
+      return 'Payout setup required';
+    default:
+      return 'Not ready';
+  }
+}
+
 function evaluateDriverEligibility(driver, now = new Date()) {
   const documents = driver?.documents || [];
   const approvedByType = new Map(
@@ -47,13 +111,15 @@ function evaluateDriverEligibility(driver, now = new Date()) {
     }
   }
 
+  const blockers = buildEligibilityBlockers(driver, missingRequiredDocuments, expiredDocuments);
+  const status = readinessStatusFor(blockers);
+
   return {
-    canGoOnline:
-      driver?.isVerified === true &&
-      driver?.verificationStatus === 'APPROVED' &&
-      driver?.stripePayoutsEnabled === true &&
-      missingRequiredDocuments.length === 0 &&
-      expiredDocuments.length === 0,
+    canGoOnline: blockers.length === 0,
+    status,
+    label: readinessLabelFor(status),
+    blockers,
+    primaryBlocker: blockers[0] || null,
     missingRequiredDocuments,
     expiredDocuments,
     payoutRequirements: {
@@ -166,6 +232,7 @@ module.exports = {
   REQUIRED_DOCUMENT_TYPES,
   applyDocumentExpiryReminders,
   assertDriverCanGoOnline,
+  buildEligibilityBlockers,
   documentExpiryReminderDays,
   evaluateDriverEligibility,
   isExpiredDocument,
