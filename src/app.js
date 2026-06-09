@@ -113,6 +113,7 @@ mountVersionedRoute(app, '/payments', require('./routes/payment.routes'));
 mountVersionedRoute(app, '/support', require('./routes/support.routes'));
 mountVersionedRoute(app, '/ratings', require('./routes/rating.routes'));
 mountVersionedRoute(app, '/invoices', require('./routes/invoice.routes'));
+mountVersionedRoute(app, '/app-config', require('./routes/app-config.routes'));
 
 // Driver routes
 mountVersionedRoute(app, '/driver/auth', require('./routes/driver-auth.routes'));
