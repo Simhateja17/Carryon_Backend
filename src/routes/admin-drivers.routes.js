@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
+const { parsePagination } = require('../lib/pagination');
 const { recordAudit } = require('../services/auditLog');
 const {
   DRIVER_DETAIL_INCLUDE,
@@ -61,6 +62,63 @@ router.post('/', async (req, res, next) => {
     res.status(201).json({
       success: true,
       data: driverListProjection(driver),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/admin/drivers/:driverId/payouts — read-only payout history
+router.get('/:driverId/payouts', async (req, res, next) => {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const driver = await prisma.driver.findUnique({
+      where: { id: req.params.driverId },
+      select: { id: true },
+    });
+    if (!driver) return next(new AppError('Driver not found', 404));
+
+    const [total, payouts] = await Promise.all([
+      prisma.driverPayout.count({ where: { driverId: req.params.driverId } }),
+      prisma.driverPayout.findMany({
+        where: { driverId: req.params.driverId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    const transactionIds = payouts
+      .map((payout) => payout.transactionId)
+      .filter(Boolean);
+    const transactions = transactionIds.length > 0
+      ? await prisma.driverWalletTransaction.findMany({
+        where: { id: { in: transactionIds } },
+      })
+      : [];
+    const transactionsById = new Map(transactions.map((transaction) => [transaction.id, transaction]));
+
+    const items = payouts.map((payout) => {
+      const transaction = payout.transactionId ? transactionsById.get(payout.transactionId) : null;
+      const requestedAmount = transaction?.grossAmount || payout.amount;
+      const feeAmount = transaction?.platformFeeAmount || 0;
+      return {
+        ...payout,
+        requestedAmount,
+        feeAmount,
+        transferAmount: payout.amount,
+        transaction: transaction || null,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        items,
+        total,
+        page,
+        pageSize: limit,
+      },
     });
   } catch (err) {
     next(err);

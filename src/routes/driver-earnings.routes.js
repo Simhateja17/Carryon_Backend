@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const { authenticateDriver, requireDriver } = require('../middleware/driverAuth');
 const { parsePagination } = require('../lib/pagination');
 const { calculateDriverWithdrawal } = require('../lib/driverPayoutFees');
+const { stripeCurrency } = require('../lib/stripe');
 const { onlineHoursForWindow } = require('../services/driverOnlineTime');
 
 const router = Router();
@@ -75,7 +76,39 @@ router.get('/transactions', async (req, res, next) => {
       take: limit,
     });
 
-    res.json({ success: true, data: transactions });
+    const withdrawalIds = transactions
+      .filter((transaction) => transaction.type === 'WITHDRAWAL')
+      .map((transaction) => transaction.id);
+    const payouts = withdrawalIds.length > 0
+      ? await prisma.driverPayout.findMany({
+        where: { transactionId: { in: withdrawalIds } },
+      })
+      : [];
+    const payoutsByTransactionId = new Map(
+      payouts
+        .filter((payout) => payout.transactionId)
+        .map((payout) => [payout.transactionId, payout])
+    );
+
+    const enriched = transactions.map((transaction) => {
+      if (transaction.type !== 'WITHDRAWAL') return transaction;
+      const payout = payoutsByTransactionId.get(transaction.id);
+      const requestedAmount = transaction.grossAmount || Math.abs(transaction.amount || 0);
+      const feeAmount = transaction.platformFeeAmount || 0;
+      const transferAmount = payout?.amount ?? Math.max(0, requestedAmount - feeAmount);
+      return {
+        ...transaction,
+        requestedAmount,
+        feeAmount,
+        transferAmount,
+        currency: payout?.currency || stripeCurrency(),
+        stripeTransferId: transaction.stripeTransferId || payout?.stripeTransferId || null,
+        stripePayoutId: payout?.stripePayoutId || null,
+        failureMessage: payout?.failureMessage || null,
+      };
+    });
+
+    res.json({ success: true, data: enriched });
   } catch (err) {
     next(err);
   }

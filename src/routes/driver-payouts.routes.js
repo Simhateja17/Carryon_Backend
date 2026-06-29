@@ -4,8 +4,10 @@ const { authenticateDriver, requireDriver } = require('../middleware/driverAuth'
 const { AppError } = require('../middleware/errorHandler');
 const { getStripe, isStripeLiveMode, stripeCurrency } = require('../lib/stripe');
 const { calculateDriverWithdrawal } = require('../lib/driverPayoutFees');
+const { stripePayoutIdFromTransfer } = require('../lib/stripePayoutMapping');
 const { parseBody } = require('../lib/validation');
 const { driverWithdrawSchema } = require('../validation/financialSchemas');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -35,6 +37,65 @@ async function syncDriverAccountStatus(driverId, account) {
       stripeRequirements: requirementsPayload(account),
     },
   });
+}
+
+function formatMoney(value, currency = stripeCurrency()) {
+  return `${String(currency || 'myr').toUpperCase()} ${Number(value || 0).toFixed(2)}`;
+}
+
+async function buildPayoutReceiptPdf({ driver, transaction, payout }) {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595, 842]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const blue = rgb(0.012, 0.251, 0.58);
+  const dark = rgb(0.08, 0.1, 0.14);
+  const muted = rgb(0.39, 0.45, 0.55);
+  const currency = payout?.currency || stripeCurrency();
+  const requestedAmount = transaction.grossAmount || Math.abs(transaction.amount || 0);
+  const feeAmount = transaction.platformFeeAmount || 0;
+  const transferAmount = payout?.amount || Math.max(0, requestedAmount - feeAmount);
+
+  page.drawText('CarryOn', { x: 48, y: 780, size: 24, font: bold, color: blue });
+  page.drawText('Driver withdrawal receipt', { x: 48, y: 752, size: 14, font, color: dark });
+
+  const rows = [
+    ['Driver', driver.name || driver.email || driver.id],
+    ['Driver ID', driver.id],
+    ['Transaction ID', transaction.id],
+    ['Receipt date', new Date().toISOString().slice(0, 10)],
+    ['Withdrawal date', new Date(transaction.createdAt).toISOString().slice(0, 10)],
+    ['Requested amount', formatMoney(requestedAmount, currency)],
+    ['Fee amount', formatMoney(feeAmount, currency)],
+    ['Transfer amount', formatMoney(transferAmount, currency)],
+    ['Status', transaction.status],
+    ['Stripe transfer ID', transaction.stripeTransferId || payout?.stripeTransferId || '-'],
+    ['Stripe payout ID', payout?.stripePayoutId || '-'],
+    ['Support', process.env.SUPPORT_EMAIL || 'support@carryon.my'],
+  ];
+
+  let y = 700;
+  for (const [label, value] of rows) {
+    page.drawText(label, { x: 48, y, size: 10, font: bold, color: muted });
+    page.drawText(String(value || '-'), { x: 190, y, size: 11, font, color: dark });
+    y -= 26;
+  }
+
+  page.drawLine({ start: { x: 48, y: 112 }, end: { x: 547, y: 112 }, thickness: 1, color: rgb(0.88, 0.9, 0.94) });
+  page.drawText('This receipt confirms a CarryOn driver wallet withdrawal request processed through Stripe Connect.', {
+    x: 48,
+    y: 88,
+    size: 9,
+    font,
+    color: muted,
+  });
+
+  return Buffer.from(await pdfDoc.save()).toString('base64');
+}
+
+async function payoutForTransaction(transactionId) {
+  if (!transactionId) return null;
+  return prisma.driverPayout.findUnique({ where: { transactionId } });
 }
 
 async function ensureAccount(driver) {
@@ -131,6 +192,39 @@ router.get('/status', async (req, res, next) => {
   }
 });
 
+router.get('/receipt/:transactionId', async (req, res, next) => {
+  try {
+    const transaction = await prisma.driverWalletTransaction.findUnique({
+      where: { id: req.params.transactionId },
+      include: {
+        wallet: {
+          include: { driver: true },
+        },
+      },
+    });
+
+    if (!transaction || transaction.wallet?.driverId !== req.driver.id || transaction.type !== 'WITHDRAWAL') {
+      return next(new AppError('Withdrawal transaction not found', 404));
+    }
+
+    const payout = await payoutForTransaction(transaction.id);
+    const base64 = await buildPayoutReceiptPdf({
+      driver: transaction.wallet.driver || req.driver,
+      transaction,
+      payout,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        url: `data:application/pdf;base64,${base64}`,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/withdraw', async (req, res, next) => {
   try {
     assertDriverPayoutsCanUseStripe();
@@ -207,6 +301,7 @@ router.post('/withdraw', async (req, res, next) => {
         amount: withdrawal.transferMinor,
         currency,
         destination: account.id,
+        expand: ['destination_payment'],
         metadata: {
           driverId: driver.id,
           payoutId: result.pending.id,
@@ -243,7 +338,7 @@ router.post('/withdraw', async (req, res, next) => {
       const transaction = await tx.driverWalletTransaction.update({
         where: { id: result.transaction.id },
         data: {
-          status: 'COMPLETED',
+          status: 'PENDING',
           stripeTransferId: transfer.id,
         },
       });
@@ -252,7 +347,8 @@ router.post('/withdraw', async (req, res, next) => {
         data: {
           transactionId: transaction.id,
           stripeTransferId: transfer.id,
-          status: 'COMPLETED',
+          stripePayoutId: stripePayoutIdFromTransfer(transfer),
+          status: 'TRANSFERRED',
         },
       });
       return transaction;
@@ -266,6 +362,7 @@ router.post('/withdraw', async (req, res, next) => {
         feeAmount: withdrawal.feeAmount,
         transferAmount: withdrawal.transferAmount,
         currency,
+        stripePayoutId: stripePayoutIdFromTransfer(transfer),
       },
     });
   } catch (err) {

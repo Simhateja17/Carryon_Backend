@@ -1,16 +1,19 @@
 const prisma = require('../lib/prisma');
 const { getStripe, stripeCurrency } = require('../lib/stripe');
+const { stripePayoutIdFromTransfer } = require('../lib/stripePayoutMapping');
 
 function stalePayoutCutoff(now = new Date(), staleAfterMs = 5 * 60 * 1000) {
   return new Date(now.getTime() - staleAfterMs);
 }
 
-async function finalizePayout(tx, payout, transferId) {
+async function finalizePayout(tx, payout, transfer) {
+  const transferId = typeof transfer === 'string' ? transfer : transfer?.id;
+  const stripePayoutId = typeof transfer === 'object' ? stripePayoutIdFromTransfer(transfer) : null;
   if (payout.transactionId) {
     await tx.driverWalletTransaction.update({
       where: { id: payout.transactionId },
       data: {
-        status: 'COMPLETED',
+        status: 'PENDING',
         stripeTransferId: transferId,
       },
     });
@@ -18,8 +21,9 @@ async function finalizePayout(tx, payout, transferId) {
   return tx.driverPayout.update({
     where: { id: payout.id },
     data: {
-      status: 'COMPLETED',
+      status: 'TRANSFERRED',
       stripeTransferId: transferId,
+      ...(stripePayoutId ? { stripePayoutId } : {}),
       failureMessage: null,
     },
   });
@@ -48,8 +52,10 @@ async function failPayout(tx, payout, message) {
 async function reconcilePayout(payout, { stripe = getStripe(), currency = stripeCurrency() } = {}) {
   try {
     if (payout.stripeTransferId) {
-      const transfer = await stripe.transfers.retrieve(payout.stripeTransferId);
-      return prisma.$transaction((tx) => finalizePayout(tx, payout, transfer.id));
+      const transfer = await stripe.transfers.retrieve(payout.stripeTransferId, {
+        expand: ['destination_payment'],
+      });
+      return prisma.$transaction((tx) => finalizePayout(tx, payout, transfer));
     }
 
     const driver = await prisma.driver.findUnique({ where: { id: payout.driverId } });
@@ -61,6 +67,7 @@ async function reconcilePayout(payout, { stripe = getStripe(), currency = stripe
       amount: payout.amountMinor,
       currency: payout.currency || currency,
       destination: driver.stripeConnectAccountId,
+      expand: ['destination_payment'],
       metadata: {
         driverId: payout.driverId,
         payoutId: payout.id,
@@ -70,7 +77,8 @@ async function reconcilePayout(payout, { stripe = getStripe(), currency = stripe
     }, {
       idempotencyKey: `driver-withdrawal-${payout.id}`,
     });
-    return prisma.$transaction((tx) => finalizePayout(tx, payout, transfer.id));
+    console.log(`[driver-payout-reconciliation] warning: idempotency key reused: driver-withdrawal-${payout.id}`);
+    return prisma.$transaction((tx) => finalizePayout(tx, payout, transfer));
   } catch (err) {
     return prisma.$transaction((tx) => failPayout(tx, payout, err.message || 'Stripe transfer reconciliation failed'));
   }
@@ -104,6 +112,7 @@ function startDriverPayoutReconciliationLoop({ intervalMs = 60_000, staleAfterMs
 }
 
 module.exports = {
+  failPayout,
   stalePayoutCutoff,
   reconcilePayout,
   reconcileStalePayouts,

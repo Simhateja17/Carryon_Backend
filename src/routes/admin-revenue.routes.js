@@ -422,13 +422,20 @@ router.get('/refunds', async (req, res, next) => {
 // ── GET /api/admin/revenue/issues ──────────────────────────
 router.get('/issues', async (req, res, next) => {
   try {
-    const [failedBookings, failedPayouts, totalDelivered, refundedCount] = await Promise.all([
+    const staleCutoff = new Date(Date.now() - 5 * 60 * 1000);
+    const [failedBookings, failedPayouts, stalePendingPayouts, totalDelivered, refundedCount] = await Promise.all([
       prisma.booking.groupBy({
         by: ['paymentMethod'],
         where: { paymentStatus: 'FAILED' },
         _count: { id: true },
       }),
       prisma.driverPayout.count({ where: { status: 'FAILED' } }),
+      prisma.driverPayout.count({
+        where: {
+          status: 'PENDING',
+          updatedAt: { lt: staleCutoff },
+        },
+      }),
       prisma.booking.count({ where: { status: 'DELIVERED' } }),
       prisma.booking.count({ where: { paymentStatus: 'REFUNDED' } }),
     ]);
@@ -449,6 +456,7 @@ router.get('/issues', async (req, res, next) => {
           count: g._count.id,
         })),
         failedPayouts,
+        stalePendingPayouts,
         successRate: parseFloat(successRate),
         refundRate: parseFloat(refundRate),
         totalDelivered,

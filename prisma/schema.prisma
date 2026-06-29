@@ -127,6 +127,7 @@ enum DriverTransactionType {
 
 enum DriverTransactionStatus {
   PENDING
+  TRANSFERRED
   COMPLETED
   FAILED
 }
@@ -152,6 +153,9 @@ enum DriverNotificationType {
   JOB_REQUEST
   JOB_UPDATE
   PAYMENT
+  PAYOUT_PAID
+  PAYOUT_FAILED
+  PAYOUT_SETUP_NEEDED
   PROMO
   SYSTEM
   ALERT
@@ -481,6 +485,7 @@ model DriverPayout {
   amountMinor      Int
   currency         String                  @default("myr")
   stripeTransferId String?                 @unique
+  stripePayoutId   String?                 @unique
   status           DriverTransactionStatus @default(PENDING)
   failureMessage   String?
   createdAt        DateTime                @default(now())
