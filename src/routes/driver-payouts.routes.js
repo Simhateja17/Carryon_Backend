@@ -111,7 +111,7 @@ async function ensureAccount(driver) {
     email: driver.email || undefined,
     business_type: 'individual',
     controller: {
-      fees: { payer: 'account' },
+      fees: { payer: 'application' },
       losses: { payments: 'application' },
       stripe_dashboard: { type: 'express' },
       requirement_collection: 'stripe',
