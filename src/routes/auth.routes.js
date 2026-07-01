@@ -87,12 +87,19 @@ router.post('/send-otp', async (req, res, next) => {
         return next(new AppError('A valid phone number is required.', 400));
       }
       if (!email) email = phoneOnlyEmail(phone);
-      const existingUser = await prisma.user.findUnique({ where: { email } });
-      if (existingUser) {
-        console.error(`[auth] send-otp blocked: signup requested for existing user ${maskEmail(email)}`);
-        return next(new AppError('An account with this phone number already exists. Please log in.', 400));
+      const existingPhoneUser = await resolveUniqueByPhone({ prisma, model: 'user', phone });
+      if (existingPhoneUser) {
+        email = existingPhoneUser.email;
+        phone = normalizePhone(existingPhoneUser.phone) || phone;
+        console.log(`[auth] send-otp treating signup as login for existing phone ${maskPhone(phone)}`);
+      } else {
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+          console.error(`[auth] send-otp blocked: signup requested for existing user ${maskEmail(email)}`);
+          return next(new AppError('An account with this phone number already exists. Please log in.', 400));
+        }
+        await assertUniquePhone({ prisma, model: 'user', phone });
       }
-      await assertUniquePhone({ prisma, model: 'user', phone });
     } else {
       return next(new AppError('Invalid OTP mode.', 400));
     }
@@ -140,6 +147,7 @@ router.post('/verify-otp', async (req, res, next) => {
     console.log(`[auth] verify-otp request for ${maskEmail(email)} (mode=${mode})`);
     const normalizedOtp = normalizeOtp(otp);
     let phone = requestedPhone;
+    let signupExistingPhoneUser = false;
 
     if (mode === 'login') {
       const existingUser = email
@@ -155,7 +163,14 @@ router.post('/verify-otp', async (req, res, next) => {
         return next(new AppError('A valid phone number is required.', 400));
       }
       if (!email) email = phoneOnlyEmail(phone);
-      await assertUniquePhone({ prisma, model: 'user', phone, excludingEmail: email });
+      const existingPhoneUser = await resolveUniqueByPhone({ prisma, model: 'user', phone });
+      if (existingPhoneUser) {
+        email = existingPhoneUser.email;
+        phone = normalizePhone(existingPhoneUser.phone) || phone;
+        signupExistingPhoneUser = true;
+      } else {
+        await assertUniquePhone({ prisma, model: 'user', phone, excludingEmail: email });
+      }
     } else {
       return next(new AppError('Invalid OTP mode.', 400));
     }
@@ -164,6 +179,15 @@ router.post('/verify-otp', async (req, res, next) => {
 
     // Create or find user in Prisma
     let user = await prisma.user.findUnique({ where: { email } });
+    if (!user && phone) {
+      const existingPhoneUser = await resolveUniqueByPhone({ prisma, model: 'user', phone });
+      if (existingPhoneUser) {
+        user = existingPhoneUser;
+        email = existingPhoneUser.email;
+        phone = normalizePhone(existingPhoneUser.phone) || phone;
+        signupExistingPhoneUser = mode === 'signup';
+      }
+    }
     const isNewUser = !user;
     if (isNewUser) {
       await assertUniquePhone({ prisma, model: 'user', phone, excludingEmail: email });
@@ -180,7 +204,7 @@ router.post('/verify-otp', async (req, res, next) => {
         where: { email },
         data: {
           isVerified: true,
-          ...(name ? { name } : {}),
+          ...(name && !signupExistingPhoneUser ? { name } : {}),
           ...(phone ? { phone } : {}),
         },
       });

@@ -3,6 +3,20 @@ const { AppError } = require('../middleware/errorHandler');
 
 const PHONE_DIGITS_MIN = 8;
 const PHONE_DIGITS_MAX = 15;
+const PHONE_IDENTITY_SQL = String.raw`
+CASE
+  WHEN regexp_replace(phone, '[\s().-]', '', 'g') ~ '^\+[0-9]{8,15}$'
+    THEN regexp_replace(phone, '[\s().-]', '', 'g')
+  WHEN regexp_replace(phone, '\D', '', 'g') ~ '^0[0-9]{7,14}$'
+    THEN '+60' || substring(regexp_replace(phone, '\D', '', 'g') from 2)
+  WHEN regexp_replace(phone, '\D', '', 'g') ~ '^60[0-9]{6,13}$'
+    THEN '+' || regexp_replace(phone, '\D', '', 'g')
+  ELSE NULL::text
+END`;
+const PHONE_IDENTITY_TABLES = {
+  user: '"User"',
+  driver: '"Driver"',
+};
 
 function normalizeEmail(email = '') {
   if (!email || typeof email !== 'string') return '';
@@ -49,6 +63,33 @@ function phoneLookupVariants(phone = '') {
   return [...variants];
 }
 
+async function findRowsByPhoneIdentity({ prisma, model, phone, take = 2, selectIdentity = false }) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return [];
+
+  const table = PHONE_IDENTITY_TABLES[model];
+  if (!table) throw new AppError('Invalid phone identity model.', 500);
+
+  if (typeof prisma.$queryRawUnsafe === 'function') {
+    const limit = Math.max(1, Math.min(Number(take) || 2, 10));
+    const select = selectIdentity ? 'id, email' : '*';
+    return prisma.$queryRawUnsafe(
+      `SELECT ${select} FROM ${table}
+       WHERE nullif(trim(phone), '') IS NOT NULL
+         AND (${PHONE_IDENTITY_SQL}) = $1
+       LIMIT ${limit}`,
+      normalized
+    );
+  }
+
+  const query = {
+    where: { phone: { in: phoneLookupVariants(normalized) } },
+    take,
+  };
+  if (selectIdentity) query.select = { id: true, email: true };
+  return prisma[model].findMany(query);
+}
+
 function requirePhone(value, message = 'A valid phone number is required.') {
   const phone = normalizePhone(value);
   if (!phone) throw new AppError(message, 400);
@@ -56,12 +97,7 @@ function requirePhone(value, message = 'A valid phone number is required.') {
 }
 
 async function assertUniquePhone({ prisma, model, phone, excludingEmail = '' }) {
-  const variants = phoneLookupVariants(phone);
-  const rows = await prisma[model].findMany({
-    where: { phone: { in: variants } },
-    select: { id: true, email: true },
-    take: 2,
-  });
+  const rows = await findRowsByPhoneIdentity({ prisma, model, phone, take: 2, selectIdentity: true });
   const conflicts = rows.filter(row => !excludingEmail || row.email !== excludingEmail);
   if (conflicts.length > 0) {
     throw new AppError('This phone number is already linked to an account.', 400);
@@ -69,11 +105,7 @@ async function assertUniquePhone({ prisma, model, phone, excludingEmail = '' }) 
 }
 
 async function resolveUniqueByPhone({ prisma, model, phone }) {
-  const variants = phoneLookupVariants(phone);
-  const rows = await prisma[model].findMany({
-    where: { phone: { in: variants } },
-    take: 2,
-  });
+  const rows = await findRowsByPhoneIdentity({ prisma, model, phone, take: 2 });
   if (rows.length > 1) {
     throw new AppError('Phone number is linked to multiple accounts. Please contact support.', 401);
   }

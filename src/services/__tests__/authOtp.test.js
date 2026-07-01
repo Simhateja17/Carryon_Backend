@@ -53,6 +53,20 @@ describe('authOtp', () => {
     });
   });
 
+  test('checks phone uniqueness with the database normalized identity when available', async () => {
+    const prisma = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([{ id: 'user-1', email: 'taken@example.com' }]),
+    };
+
+    await expect(assertUniquePhone({ prisma, model: 'user', phone: '+60123456789' }))
+      .rejects
+      .toMatchObject({ statusCode: 400 });
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining('FROM "User"'),
+      '+60123456789'
+    );
+  });
+
   test('sends SMS OTP through Supabase phone auth', async () => {
     const signInWithOtp = jest.fn().mockResolvedValue({ error: null });
     getSupabaseAdmin.mockReturnValue({ auth: { signInWithOtp } });
