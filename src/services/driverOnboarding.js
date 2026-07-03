@@ -17,6 +17,10 @@ function optionalTrimmed(max = MAX_TEXT) {
   return z.string().trim().max(max).optional().nullable().transform((value) => value || '');
 }
 
+function requiredTrimmed(max = MAX_TEXT) {
+  return z.string().trim().min(1).max(max);
+}
+
 function nullableTrimmed(max = MAX_TEXT) {
   return z.string().trim().max(max).optional().nullable().transform((value) => value || null);
 }
@@ -48,9 +52,9 @@ const profileSchema = z.object({
   emergencyContactName: optionalTrimmed(MAX_TEXT),
   emergencyContactRelation: optionalTrimmed(80),
   emergencyContactPhone: optionalTrimmed(40),
-  bankName: optionalTrimmed(120),
-  bankAccountNumber: optionalTrimmed(80),
-  bankAccountHolder: optionalTrimmed(MAX_TEXT),
+  bankName: requiredTrimmed(120),
+  bankAccountNumber: requiredTrimmed(80),
+  bankAccountHolder: requiredTrimmed(MAX_TEXT),
   duitNowId: optionalTrimmed(120),
   tngEwalletId: optionalTrimmed(120),
   lhdnTaxNumber: optionalTrimmed(80),
@@ -145,8 +149,15 @@ function assertDocumentPathsBelongToDriver(documents, driverId) {
   }
 }
 
+function bankDetailsChanged(profile, previous = {}) {
+  return ['bankName', 'bankAccountNumber', 'bankAccountHolder', 'duitNowId'].some(
+    (field) => String(profile[field] || '').trim() !== String(previous[field] || '').trim()
+  );
+}
+
 function profileData(profile, submittedAt, agreementVersion, previous = {}) {
   const emergencyContact = profile.emergencyContactPhone || profile.emergencyContactName || '';
+  const resetBankReview = bankDetailsChanged(profile, previous);
   return {
     name: profile.name,
     phone: profile.phone,
@@ -179,6 +190,12 @@ function profileData(profile, submittedAt, agreementVersion, previous = {}) {
     bankAccountNumber: profile.bankAccountNumber,
     bankAccountHolder: profile.bankAccountHolder,
     duitNowId: profile.duitNowId,
+    ...(resetBankReview && {
+      bankDetailsStatus: 'PENDING',
+      bankDetailsReviewedAt: null,
+      bankDetailsReviewedByAdminId: null,
+      bankDetailsRejectionReason: null,
+    }),
     tngEwalletId: profile.tngEwalletId,
     lhdnTaxNumber: profile.lhdnTaxNumber,
     sstNumber: profile.sstNumber,
@@ -225,7 +242,16 @@ async function submitDriverOnboarding(driverId, body, { db = prisma, actor } = {
   return db.$transaction(async (tx) => {
     const before = await tx.driver.findUnique({
       where: { id: driverId },
-      select: { id: true, verificationStatus: true, isVerified: true },
+      select: {
+        id: true,
+        verificationStatus: true,
+        isVerified: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountHolder: true,
+        duitNowId: true,
+        bankDetailsStatus: true,
+      },
     });
     if (!before) throw new AppError('Driver not found', 404);
 

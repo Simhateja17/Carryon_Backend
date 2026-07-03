@@ -134,6 +134,7 @@ mountVersionedRoute(app, '/driver/payouts', require('./routes/driver-payouts.rou
 // Admin routes (protected by admin key)
 mountVersionedRoute(app, '/admin/notifications', require('./routes/admin-notifications.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/drivers', require('./routes/admin-drivers.routes'), adminAuth);
+mountVersionedRoute(app, '/admin/payouts', require('./routes/admin-payouts.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/extra-charges', require('./routes/admin-extra-charges.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/command-center', require('./routes/admin-command-center.routes'), adminAuth);
 mountVersionedRoute(app, '/admin/maps', require('./routes/admin-maps.routes'), adminAuth);

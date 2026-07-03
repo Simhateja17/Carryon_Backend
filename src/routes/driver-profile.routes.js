@@ -11,6 +11,7 @@ const {
 } = require('../lib/pushDevices');
 const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
 const { serializeDriver } = require('../lib/driverResponse');
+const { recordAudit } = require('../services/auditLog');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -49,6 +50,72 @@ router.put('/', async (req, res, next) => {
       },
       include: { documents: true, vehicle: true },
     });
+    res.json({ success: true, data: serializeDriver(driver) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/driver/profile/bank-details — edit payout destination details
+router.put('/bank-details', async (req, res, next) => {
+  try {
+    const bankName = String(req.body?.bankName || '').trim();
+    const bankAccountHolder = String(req.body?.bankAccountHolder || '').trim();
+    const bankAccountNumber = String(req.body?.bankAccountNumber || '').trim();
+    const duitNowId = String(req.body?.duitNowId || '').trim();
+
+    if (!bankName || !bankAccountHolder || !bankAccountNumber) {
+      return next(new AppError('bankName, bankAccountHolder, and bankAccountNumber are required', 400));
+    }
+
+    const before = await prisma.driver.findUnique({
+      where: { id: req.driver.id },
+      select: {
+        id: true,
+        bankName: true,
+        bankAccountHolder: true,
+        bankAccountNumber: true,
+        duitNowId: true,
+        bankDetailsStatus: true,
+      },
+    });
+    if (!before) return next(new AppError('Driver not found', 404));
+
+    const changed = ['bankName', 'bankAccountHolder', 'bankAccountNumber', 'duitNowId'].some((field) => {
+      const nextValue = { bankName, bankAccountHolder, bankAccountNumber, duitNowId }[field];
+      return String(before[field] || '').trim() !== String(nextValue || '').trim();
+    });
+
+    const driver = await prisma.$transaction(async (tx) => {
+      const updated = await tx.driver.update({
+        where: { id: req.driver.id },
+        data: {
+          bankName,
+          bankAccountHolder,
+          bankAccountNumber,
+          duitNowId,
+          ...(changed && {
+            bankDetailsStatus: 'PENDING',
+            bankDetailsReviewedAt: null,
+            bankDetailsReviewedByAdminId: null,
+            bankDetailsRejectionReason: null,
+          }),
+        },
+        include: { documents: true, vehicle: true },
+      });
+      if (changed) {
+        await recordAudit(tx, {
+          actor: { actorId: req.driver.id, actorType: 'DRIVER' },
+          action: 'DRIVER_BANK_DETAILS_UPDATED',
+          entityType: 'Driver',
+          entityId: req.driver.id,
+          oldValue: { bankDetailsStatus: before.bankDetailsStatus },
+          newValue: { bankDetailsStatus: 'PENDING' },
+        });
+      }
+      return updated;
+    });
+
     res.json({ success: true, data: serializeDriver(driver) });
   } catch (err) {
     next(err);

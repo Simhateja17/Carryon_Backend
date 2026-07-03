@@ -74,6 +74,12 @@ enum DriverVerificationStatus {
   REJECTED
 }
 
+enum DriverBankDetailsStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum DocumentType {
   DRIVERS_LICENSE
   DRIVERS_LICENSE_BACK
@@ -313,6 +319,10 @@ model Driver {
   bankAccountNumber  String                   @default("")
   bankAccountHolder  String                   @default("")
   duitNowId          String                   @default("")
+  bankDetailsStatus  DriverBankDetailsStatus  @default(PENDING)
+  bankDetailsReviewedAt DateTime?
+  bankDetailsReviewedByAdminId String?
+  bankDetailsRejectionReason String?
   tngEwalletId       String                   @default("")
   lhdnTaxNumber      String                   @default("")
   sstNumber          String                   @default("")
@@ -470,6 +480,7 @@ model DriverWalletTransaction {
   description String                  @default("")
   jobId       String?
   stripeTransferId String?            @unique
+  manualReference String?
   status      DriverTransactionStatus @default(COMPLETED)
   createdAt   DateTime                @default(now())
 
@@ -486,6 +497,10 @@ model DriverPayout {
   currency         String                  @default("myr")
   stripeTransferId String?                 @unique
   stripePayoutId   String?                 @unique
+  bankSnapshot     Json?
+  manualReference  String?
+  paidAt           DateTime?
+  paidByAdminId    String?
   status           DriverTransactionStatus @default(PENDING)
   failureMessage   String?
   createdAt        DateTime                @default(now())

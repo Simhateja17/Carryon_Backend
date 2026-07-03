@@ -17,6 +17,10 @@ describe('driverEligibility', () => {
       isVerified: true,
       verificationStatus: 'APPROVED',
       stripePayoutsEnabled: true,
+      bankName: 'Maybank',
+      bankAccountHolder: 'Alex Driver',
+      bankAccountNumber: '1234567890',
+      bankDetailsStatus: 'APPROVED',
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
       ],
@@ -36,6 +40,10 @@ describe('driverEligibility', () => {
       isVerified: true,
       verificationStatus: 'APPROVED',
       stripePayoutsEnabled: true,
+      bankName: 'Maybank',
+      bankAccountHolder: 'Alex Driver',
+      bankAccountNumber: '1234567890',
+      bankDetailsStatus: 'APPROVED',
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
         { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2026-05-07' },
@@ -54,6 +62,10 @@ describe('driverEligibility', () => {
       isVerified: true,
       verificationStatus: 'APPROVED',
       stripePayoutsEnabled: true,
+      bankName: 'Maybank',
+      bankAccountHolder: 'Alex Driver',
+      bankAccountNumber: '1234567890',
+      bankDetailsStatus: 'APPROVED',
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
         { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
@@ -66,13 +78,17 @@ describe('driverEligibility', () => {
     expect(eligibility.canGoOnline).toBe(true);
   });
 
-  test('blocks verified drivers until Stripe payouts are enabled', () => {
+  test('blocks verified drivers until bank payout details are approved', () => {
     const eligibility = evaluateDriverEligibility({
       isVerified: true,
       verificationStatus: 'APPROVED',
       stripePayoutsEnabled: false,
       stripeConnectAccountId: 'acct_123',
       stripeDetailsSubmitted: true,
+      bankName: 'Maybank',
+      bankAccountHolder: 'Alex Driver',
+      bankAccountNumber: '1234567890',
+      bankDetailsStatus: 'PENDING',
       documents: [
         { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
         { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
@@ -85,17 +101,18 @@ describe('driverEligibility', () => {
     expect(eligibility.canGoOnline).toBe(false);
     expect(eligibility.status).toBe('PAYOUT_SETUP_REQUIRED');
     expect(eligibility.primaryBlocker).toMatchObject({
-      code: 'STRIPE_PAYOUTS_DISABLED',
+      code: 'BANK_DETAILS_NOT_APPROVED',
     });
     expect(eligibility.payoutRequirements).toMatchObject({
       stripeAccountId: 'acct_123',
       detailsSubmitted: true,
       payoutsEnabled: false,
+      bankDetailsStatus: 'PENDING',
     });
   });
 
-  test('can allow approved drivers online without Stripe payouts when review override is enabled', () => {
-    process.env.DRIVER_ONLINE_REQUIRES_STRIPE_PAYOUTS = 'false';
+  test('can allow approved drivers online without approved bank details when review override is enabled', () => {
+    process.env.DRIVER_ONLINE_REQUIRES_BANK_DETAILS = 'false';
 
     const eligibility = evaluateDriverEligibility({
       isVerified: true,
@@ -133,7 +150,7 @@ describe('driverEligibility', () => {
       'REQUIRED_DOCUMENT_MISSING',
       'REQUIRED_DOCUMENT_MISSING',
       'REQUIRED_DOCUMENT_MISSING',
-      'STRIPE_PAYOUTS_DISABLED',
+      'BANK_DETAILS_NOT_APPROVED',
     ]);
   });
 

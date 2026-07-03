@@ -4,6 +4,7 @@ const {
   REQUIRED_DRIVER_ONBOARDING_DOCUMENT_TYPES,
   missingApprovedDocumentTypes,
 } = require('../lib/driverOnboardingRequirements');
+const { hasRequiredBankDetails } = require('./manualDriverPayouts');
 
 const VERIFICATION_DECISIONS = new Set(['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED']);
 
@@ -43,6 +44,11 @@ function driverApprovalBlockers(driver) {
   }
   if (!driver.noOffencesDeclared) {
     blockers.push('No-offences declaration is missing.');
+  }
+  if (!hasRequiredBankDetails(driver)) {
+    blockers.push('Required bank payout details are missing.');
+  } else if (driver.bankDetailsStatus !== 'APPROVED') {
+    blockers.push('Bank payout details must be approved before driver approval.');
   }
 
   return blockers;

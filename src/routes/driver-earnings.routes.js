@@ -5,6 +5,7 @@ const { parsePagination } = require('../lib/pagination');
 const { calculateDriverWithdrawal } = require('../lib/driverPayoutFees');
 const { stripeCurrency } = require('../lib/stripe');
 const { onlineHoursForWindow } = require('../services/driverOnlineTime');
+const { hasRequiredBankDetails } = require('../services/manualDriverPayouts');
 
 const router = Router();
 router.use(authenticateDriver, requireDriver);
@@ -104,6 +105,7 @@ router.get('/transactions', async (req, res, next) => {
         currency: payout?.currency || stripeCurrency(),
         stripeTransferId: transaction.stripeTransferId || payout?.stripeTransferId || null,
         stripePayoutId: payout?.stripePayoutId || null,
+        manualReference: transaction.manualReference || payout?.manualReference || null,
         failureMessage: payout?.failureMessage || null,
       };
     });
@@ -125,6 +127,8 @@ router.get('/wallet', async (req, res, next) => {
       wallet = await prisma.driverWallet.create({ data: { driverId: req.driver.id } });
     }
 
+    const bankDetailsApproved = hasRequiredBankDetails(req.driver) && req.driver.bankDetailsStatus === 'APPROVED';
+
     res.json({
       success: true,
       data: {
@@ -133,12 +137,14 @@ router.get('/wallet', async (req, res, next) => {
         lifetimeEarnings: wallet.lifetimeEarnings,
         lastPayout: null,
         lastPayoutDate: null,
-        bankAccountLinked: !!req.driver.stripePayoutsEnabled,
-        bankAccountLast4: req.driver.stripePayoutsEnabled ? 'Stripe' : null,
+        bankAccountLinked: bankDetailsApproved,
+        bankAccountLast4: bankDetailsApproved ? String(req.driver.bankAccountNumber || '').slice(-4) : null,
         stripeAccountId: req.driver.stripeConnectAccountId || null,
-        stripeDetailsSubmitted: !!req.driver.stripeDetailsSubmitted,
-        stripePayoutsEnabled: !!req.driver.stripePayoutsEnabled,
+        stripeDetailsSubmitted: hasRequiredBankDetails(req.driver),
+        stripePayoutsEnabled: bankDetailsApproved,
         stripeRequirements: req.driver.stripeRequirements || null,
+        bankDetailsStatus: req.driver.bankDetailsStatus || 'PENDING',
+        bankDetailsRejectionReason: req.driver.bankDetailsRejectionReason || null,
         minimumWithdrawalAmount: calculateDriverWithdrawal(0).minimumAmount,
         withdrawalFeeFlat: Number(process.env.DRIVER_WITHDRAWAL_FEE_FLAT || 0),
         withdrawalFeeRate: Number(process.env.DRIVER_WITHDRAWAL_FEE_RATE || 0),
@@ -154,7 +160,7 @@ router.post('/wallet/withdraw', async (req, res, next) => {
   try {
     res.status(410).json({
       success: false,
-      message: 'Use /api/driver/payouts/withdraw for Stripe Connect withdrawals',
+      message: 'Use /api/driver/payouts/withdraw for manual bank withdrawals',
     });
   } catch (err) {
     next(err);

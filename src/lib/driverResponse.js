@@ -45,8 +45,16 @@ function serializeDriverVehicle(vehicle) {
 
 function serializeDriver(driver) {
   if (!driver) return null;
+  const hasBankDetails = !!(
+    String(driver.bankName || '').trim() &&
+    String(driver.bankAccountHolder || '').trim() &&
+    String(driver.bankAccountNumber || '').trim()
+  );
+  const bankPayoutsEnabled = hasBankDetails && driver.bankDetailsStatus === 'APPROVED';
   return {
     ...driver,
+    stripeDetailsSubmitted: hasBankDetails,
+    stripePayoutsEnabled: bankPayoutsEnabled,
     nationality: enumOrNull(driver.nationality, DRIVER_NATIONALITIES),
     licenseClass: enumOrNull(driver.licenseClass, LICENSE_CLASSES),
     state: enumOrNull(driver.state, MALAYSIAN_STATES),

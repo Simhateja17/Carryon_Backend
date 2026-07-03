@@ -4,6 +4,7 @@ const {
   REQUIRED_DRIVER_ELIGIBILITY_DOCUMENT_TYPES,
   missingApprovedDocumentTypes,
 } = require('../lib/driverOnboardingRequirements');
+const { hasRequiredBankDetails } = require('./manualDriverPayouts');
 
 const REQUIRED_DOCUMENT_TYPES = new Set(REQUIRED_DRIVER_ELIGIBILITY_DOCUMENT_TYPES);
 
@@ -52,12 +53,12 @@ function buildEligibilityBlockers(driver, missingRequiredDocuments, expiredDocum
       message: `${documentLabel(type)} has expired and must be renewed before the driver can go online.`,
     });
   }
-  if (driverOnlineRequiresStripePayouts() && driver?.stripePayoutsEnabled !== true) {
+  if (driverOnlineRequiresApprovedBankDetails() && (!hasRequiredBankDetails(driver) || driver?.bankDetailsStatus !== 'APPROVED')) {
     blockers.push({
-      code: 'STRIPE_PAYOUTS_DISABLED',
-      message: driver?.stripeConnectAccountId
-        ? 'Stripe payout setup is incomplete or payouts are disabled.'
-        : 'Driver must complete Stripe payout setup before going online.',
+      code: 'BANK_DETAILS_NOT_APPROVED',
+      message: hasRequiredBankDetails(driver)
+        ? 'Bank payout details must be approved before the driver can go online.'
+        : 'Driver must submit bank payout details before going online.',
     });
   }
   return blockers;
@@ -67,13 +68,17 @@ function driverOnlineRequiresStripePayouts() {
   return process.env.DRIVER_ONLINE_REQUIRES_STRIPE_PAYOUTS !== 'false';
 }
 
+function driverOnlineRequiresApprovedBankDetails() {
+  return process.env.DRIVER_ONLINE_REQUIRES_BANK_DETAILS !== 'false';
+}
+
 function readinessStatusFor(blockers) {
   if (blockers.length === 0) return 'READY_TO_GO_ONLINE';
   const codes = new Set(blockers.map((blocker) => blocker.code));
   if (codes.has('ADMIN_APPROVAL_REQUIRED')) return 'ADMIN_REVIEW_REQUIRED';
   if (codes.has('REQUIRED_DOCUMENT_EXPIRED')) return 'DOCUMENTS_EXPIRED';
   if (codes.has('REQUIRED_DOCUMENT_MISSING')) return 'DOCUMENTS_REQUIRED';
-  if (codes.has('STRIPE_PAYOUTS_DISABLED')) return 'PAYOUT_SETUP_REQUIRED';
+  if (codes.has('BANK_DETAILS_NOT_APPROVED')) return 'PAYOUT_SETUP_REQUIRED';
   return 'NOT_READY';
 }
 
@@ -128,9 +133,11 @@ function evaluateDriverEligibility(driver, now = new Date()) {
     expiredDocuments,
     payoutRequirements: {
       stripeAccountId: driver?.stripeConnectAccountId || null,
-      detailsSubmitted: driver?.stripeDetailsSubmitted === true,
-      payoutsEnabled: driver?.stripePayoutsEnabled === true,
+      detailsSubmitted: hasRequiredBankDetails(driver),
+      payoutsEnabled: hasRequiredBankDetails(driver) && driver?.bankDetailsStatus === 'APPROVED',
       requirements: driver?.stripeRequirements || null,
+      bankDetailsStatus: driver?.bankDetailsStatus || 'PENDING',
+      bankDetailsRejectionReason: driver?.bankDetailsRejectionReason || null,
     },
   };
 }
@@ -159,7 +166,7 @@ async function assertDriverCanGoOnline(
   });
   const eligibility = evaluateDriverEligibility(driver, now);
   if (!eligibility.canGoOnline) {
-    const err = new Error('Driver cannot go online until required documents are approved, unexpired, and Stripe payouts are enabled.');
+    const err = new Error('Driver cannot go online until required documents are approved, unexpired, and bank payout details are approved.');
     err.statusCode = 403;
     err.details = eligibility;
     throw err;
@@ -239,6 +246,7 @@ module.exports = {
   buildEligibilityBlockers,
   documentExpiryReminderDays,
   driverOnlineRequiresStripePayouts,
+  driverOnlineRequiresApprovedBankDetails,
   evaluateDriverEligibility,
   isExpiredDocument,
   normalizeEligibilityLocation,
