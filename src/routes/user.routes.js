@@ -13,6 +13,7 @@ const {
   recordPrivacyConsent,
 } = require('../services/privacyAccount');
 const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
+const { getSignedUrl } = require('../lib/supabase');
 
 const router = Router();
 router.use(authenticate);
@@ -29,10 +30,19 @@ router.get('/me', async (req, res, next) => {
       select: { id: true, profileImage: true, language: true, isVerified: true, referralCode: true, createdAt: true },
     });
     if (!user) return next(new AppError('User not found', 404));
+    let profileImageUrl = null;
+    if (user.profileImage) {
+      try {
+        profileImageUrl = await getSignedUrl(user.profileImage, 3600);
+      } catch (error) {
+        console.error('[user] GET /me — profile image signing failed:', error.message);
+      }
+    }
     res.json({
       success: true,
       data: {
         ...user,
+        profileImageUrl,
         email: req.user.email,
         name: req.user.name,
         phone: req.user.phone,

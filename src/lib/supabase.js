@@ -28,6 +28,12 @@ const REQUIRED_STORAGE_BUCKETS = [
     fileSizeLimit: 5 * 1024 * 1024,
     allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'],
   },
+  {
+    name: 'user-profile-images',
+    public: false,
+    fileSizeLimit: 5 * 1024 * 1024,
+    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'],
+  },
 ];
 
 function serviceRoleHeaders() {

@@ -2,7 +2,9 @@ const { Router } = require('express');
 const multer = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
-const { uploadToSupabase } = require('../lib/supabase');
+const prisma = require('../lib/prisma');
+const { getSignedUrl, uploadToSupabase } = require('../lib/supabase');
+const { validateImageMagicBytes } = require('../lib/imageValidation');
 
 const router = Router();
 router.use(authenticate);
@@ -61,6 +63,49 @@ router.post('/package-image', parseUploadMiddleware, async (req, res, next) => {
     res.json({
       success: true,
       data: { url: publicUrl },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/upload/profile-image
+router.post('/profile-image', parseUploadMiddleware, async (req, res, next) => {
+  try {
+    console.log('[upload] POST profile-image — userId:', req.user.userId, 'fileSize:', req.file?.size);
+    if (!req.file) {
+      return next(new AppError('No image file provided', 400));
+    }
+
+    const detected = validateImageMagicBytes(req.file);
+    if (!detected) {
+      return next(new AppError('File is not a valid image', 400));
+    }
+
+    const objectPath = `${req.user.userId}/profile_${Date.now()}.${detected.ext}`;
+    const storageFile = { ...req.file, mimetype: detected.type };
+    let profileImage;
+    try {
+      profileImage = await uploadToSupabase('user-profile-images', storageFile, objectPath, { upsert: true });
+    } catch (error) {
+      console.error('[upload] profile-image storage error:', error);
+      return next(new AppError(`Failed to upload profile image: ${error.message || 'unknown storage error'}`, 500));
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { profileImage },
+      select: { id: true, profileImage: true },
+    });
+    const profileImageUrl = await getSignedUrl(user.profileImage, 3600);
+
+    console.log('[upload] profile-image uploaded — userId:', req.user.userId, 'path:', profileImage);
+    res.json({
+      success: true,
+      data: {
+        profileImage: user.profileImage,
+        profileImageUrl,
+      },
     });
   } catch (err) {
     next(err);
