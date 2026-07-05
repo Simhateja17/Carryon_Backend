@@ -17,7 +17,7 @@ describe('deliveryLifecycle wait-time charging', () => {
     jest.clearAllMocks();
   });
 
-  test('charges pickup wait time when pickup OTP is verified after free window', async () => {
+  test('records pickup wait time as pending payment when pickup OTP is verified after free window', async () => {
     const arrivedAt = new Date(Date.now() - 8 * 60 * 1000);
     const booking = {
       id: 'booking-1',
@@ -44,28 +44,14 @@ describe('deliveryLifecycle wait-time charging', () => {
           waitTimeCharge: 1.5,
         }),
       },
-      wallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 100 }),
-        update: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
-      },
-      walletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'wallet-tx-1' }),
-      },
       bookingAdjustment: {
         upsert: jest.fn().mockResolvedValue({
           id: 'adjustment-1',
           bookingId: 'booking-1',
           type: 'PICKUP_WAIT_TIME',
           amount: 1.5,
-          status: 'APPLIED',
+          status: 'PENDING_PAYMENT',
         }),
-      },
-      driverWallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'driver-wallet-1', balance: 0 }),
-        update: jest.fn().mockResolvedValue({ id: 'driver-wallet-1' }),
-      },
-      driverWalletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'driver-wallet-tx-1' }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -92,12 +78,6 @@ describe('deliveryLifecycle wait-time charging', () => {
         waitTimeCharge: expect.any(Number),
       }),
     }));
-    expect(tx.walletTransaction.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        amount: expect.any(Number),
-        description: 'Pickup wait-time charge',
-      }),
-    });
     expect(tx.bookingAdjustment.upsert).toHaveBeenCalledWith({
       where: {
         bookingId_type: {
@@ -109,17 +89,11 @@ describe('deliveryLifecycle wait-time charging', () => {
         bookingId: 'booking-1',
         type: 'PICKUP_WAIT_TIME',
         amount: expect.any(Number),
-        status: 'APPLIED',
+        status: 'PENDING_PAYMENT',
       }),
       update: expect.objectContaining({
         amount: expect.any(Number),
-        status: 'APPLIED',
-      }),
-    });
-    expect(tx.driverWalletTransaction.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        amount: expect.any(Number),
-        description: 'Pickup wait-time compensation',
+        status: 'PENDING_PAYMENT',
       }),
     });
   });

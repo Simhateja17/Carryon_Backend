@@ -1,5 +1,5 @@
 const prisma = require('../lib/prisma');
-const { getStripe, stripeCurrency } = require('../lib/stripe');
+const { getStripe, isStripeLiveMode, stripeCurrency } = require('../lib/stripe');
 const { fromMinorUnits, money, toMinorUnits } = require('../lib/money');
 const { recordAudit } = require('./auditLog');
 
@@ -14,9 +14,15 @@ function isPendingPaymentFresh(payment, now = new Date()) {
   return payment?.status === 'PENDING' && paymentExpiresAt(payment.createdAt).getTime() > now.getTime();
 }
 
-async function ensureStripeCustomer(user) {
-  if (user.stripeCustomerId) return user.stripeCustomerId;
+function isStripeModeMismatch(err) {
+  return err?.type === 'StripeInvalidRequestError'
+    && err?.code === 'resource_missing'
+    && typeof err?.message === 'string'
+    && err.message.includes('a similar object exists in')
+    && err.message.includes('mode');
+}
 
+async function createStripeCustomer(user, { persist = true } = {}) {
   const customer = await getStripe().customers.create({
     email: user.email,
     name: user.name || undefined,
@@ -24,11 +30,35 @@ async function ensureStripeCustomer(user) {
     metadata: { userId: user.id },
   });
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { stripeCustomerId: customer.id },
-  });
+  if (persist) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { stripeCustomerId: customer.id },
+    });
+  }
+
   return customer.id;
+}
+
+async function ensureStripeCustomer(user) {
+  if (user.stripeCustomerId) {
+    try {
+      await getStripe().customers.retrieve(user.stripeCustomerId);
+      return user.stripeCustomerId;
+    } catch (err) {
+      if (!isStripeModeMismatch(err)) throw err;
+
+      console.warn(
+        '[booking-payments] ignoring saved Stripe customer from different mode',
+        user.stripeCustomerId,
+        'currentMode:',
+        isStripeLiveMode() ? 'live' : 'test'
+      );
+      return createStripeCustomer(user, { persist: false });
+    }
+  }
+
+  return createStripeCustomer(user);
 }
 
 function bookingPaymentPayload(payment, paymentIntent) {
@@ -92,9 +122,19 @@ async function createOrReuseBookingPaymentIntent({ booking, user, now = new Date
   });
 
   if (isPendingPaymentFresh(latestPayment, now)) {
-    const paymentIntent = await getStripe().paymentIntents.retrieve(latestPayment.stripePaymentIntentId);
-    if (!['canceled', 'succeeded'].includes(paymentIntent.status)) {
-      return bookingPaymentPayload(latestPayment, paymentIntent);
+    try {
+      const paymentIntent = await getStripe().paymentIntents.retrieve(latestPayment.stripePaymentIntentId);
+      if (!['canceled', 'succeeded'].includes(paymentIntent.status)) {
+        return bookingPaymentPayload(latestPayment, paymentIntent);
+      }
+    } catch (err) {
+      if (!isStripeModeMismatch(err)) throw err;
+      console.warn(
+        '[booking-payments] ignoring pending PaymentIntent from different Stripe mode',
+        latestPayment.stripePaymentIntentId,
+        'currentMode:',
+        isStripeLiveMode() ? 'live' : 'test'
+      );
     }
   }
 
