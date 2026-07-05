@@ -22,7 +22,7 @@ function isStripeModeMismatch(err) {
     && err.message.includes('mode');
 }
 
-async function createStripeCustomer(user, { persist = true } = {}) {
+async function createStripeCustomer(user, { persist = isStripeLiveMode() } = {}) {
   const customer = await getStripe().customers.create({
     email: user.email,
     name: user.name || undefined,
@@ -54,7 +54,7 @@ async function ensureStripeCustomer(user) {
         'currentMode:',
         isStripeLiveMode() ? 'live' : 'test'
       );
-      return createStripeCustomer(user, { persist: false });
+      return createStripeCustomer(user);
     }
   }
 
