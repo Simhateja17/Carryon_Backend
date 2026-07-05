@@ -30,7 +30,22 @@ async function recordStripeEvent(event) {
 }
 
 async function processWebhookEvent(eventRecord) {
+  console.log(
+    '[webhook-inbox] processing_started',
+    'eventRecordId:', eventRecord.id,
+    'providerEventId:', eventRecord.providerEventId,
+    'eventType:', eventRecord.eventType,
+    'status:', eventRecord.status,
+    'retryCount:', eventRecord.retryCount || 0
+  );
+
   if (eventRecord.status === 'PROCESSED' || eventRecord.status === 'FAILED') {
+    console.log(
+      '[webhook-inbox] processing_skipped_terminal',
+      'eventRecordId:', eventRecord.id,
+      'providerEventId:', eventRecord.providerEventId,
+      'status:', eventRecord.status
+    );
     return eventRecord;
   }
 
@@ -48,6 +63,13 @@ async function processWebhookEvent(eventRecord) {
       if (current.provider === 'stripe') {
         const tasks = await handleStripeEvent(tx, current.payload);
         postCommitTasks = Array.isArray(tasks) ? tasks : [];
+        console.log(
+          '[webhook-inbox] stripe_event_handled',
+          'eventRecordId:', current.id,
+          'providerEventId:', current.providerEventId,
+          'eventType:', current.eventType,
+          'postCommitTasks:', postCommitTasks.map((task) => task?.type).join(',') || 'none'
+        );
       }
 
       return tx.webhookEvent.update({
@@ -62,10 +84,26 @@ async function processWebhookEvent(eventRecord) {
     });
 
     await runPostCommitTasks(postCommitTasks);
+    console.log(
+      '[webhook-inbox] processing_completed',
+      'eventRecordId:', processedEvent?.id,
+      'providerEventId:', processedEvent?.providerEventId,
+      'eventType:', processedEvent?.eventType,
+      'status:', processedEvent?.status
+    );
     return processedEvent;
   } catch (err) {
     const retryCount = (eventRecord.retryCount || 0) + 1;
     const failed = retryCount >= MAX_ATTEMPTS;
+    console.error(
+      '[webhook-inbox] processing_failed',
+      'eventRecordId:', eventRecord.id,
+      'providerEventId:', eventRecord.providerEventId,
+      'eventType:', eventRecord.eventType,
+      'retryCount:', retryCount,
+      'terminal:', failed,
+      'message:', err.message || String(err)
+    );
     return prisma.webhookEvent.update({
       where: { id: eventRecord.id },
       data: {
@@ -81,14 +119,32 @@ async function processWebhookEvent(eventRecord) {
 async function runPostCommitTasks(tasks) {
   for (const task of tasks || []) {
     if (task?.type !== 'DISPATCH_BOOKING' || !task.bookingId) continue;
+    console.log(
+      '[webhook-inbox] dispatch_task_started',
+      'bookingId:', task.bookingId
+    );
     const booking = await prisma.booking.findUnique({
       where: { id: task.bookingId },
       include: { pickupAddress: true, deliveryAddress: true, driver: true },
     });
-    if (!booking || booking.status !== 'SEARCHING_DRIVER' || booking.paymentStatus !== 'COMPLETED') continue;
+    if (!booking || booking.status !== 'SEARCHING_DRIVER' || booking.paymentStatus !== 'COMPLETED') {
+      console.warn(
+        '[webhook-inbox] dispatch_task_skipped',
+        'bookingId:', task.bookingId,
+        'found:', !!booking,
+        'bookingStatus:', booking?.status || '',
+        'paymentStatus:', booking?.paymentStatus || ''
+      );
+      continue;
+    }
     notifyNearbyDrivers(booking).catch((err) => {
       console.error('[webhook-inbox] post-payment dispatch failed:', err.message);
     });
+    console.log(
+      '[webhook-inbox] dispatch_task_enqueued',
+      'bookingId:', booking.id,
+      'orderCode:', booking.orderCode || ''
+    );
   }
 }
 

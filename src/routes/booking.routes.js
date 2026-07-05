@@ -454,6 +454,18 @@ router.post('/:id/cancel', async (req, res, next) => {
           refundAmount: 0,
           feeApplies: false,
         };
+      console.log(
+        '[booking] cancel_decision',
+        'bookingId:', req.params.id,
+        'paymentMethod:', booking.paymentMethod,
+        'paymentStatus:', booking.paymentStatus,
+        'bookingStatus:', booking.status,
+        'shouldRefund:', shouldRefund,
+        'refundAmount:', cancellation.refundAmount,
+        'cancellationFee:', cancellation.fee,
+        'driverShare:', cancellation.driverShare,
+        'platformShare:', cancellation.platformShare
+      );
       const updated = await tx.booking.update({
         where: { id: req.params.id },
         data: {
@@ -497,15 +509,32 @@ router.post('/:id/cancel', async (req, res, next) => {
 
     if (cancellationOutcome?.shouldRefund && cancellationOutcome.refundAmount > 0) {
       try {
-        console.log('[booking] Stripe cancel refund — bookingId:', req.params.id, 'refund amount:', cancellationOutcome.refundAmount);
+        console.log(
+          '[booking] cancel_refund_started',
+          'bookingId:', req.params.id,
+          'refundAmount:', cancellationOutcome.refundAmount,
+          'cancellationFee:', cancellationOutcome.fee
+        );
         await refundLatestBookingPayment({
           booking,
           amount: cancellationOutcome.refundAmount,
           reason: 'Customer cancellation refund',
         });
+        console.log(
+          '[booking] cancel_refund_completed',
+          'bookingId:', req.params.id,
+          'refundAmount:', cancellationOutcome.refundAmount
+        );
       } catch (refundErr) {
         console.error('[booking] Stripe refund failed — bookingId:', req.params.id, refundErr.message);
       }
+    } else {
+      console.log(
+        '[booking] cancel_refund_skipped',
+        'bookingId:', req.params.id,
+        'shouldRefund:', !!cancellationOutcome?.shouldRefund,
+        'refundAmount:', cancellationOutcome?.refundAmount || 0
+      );
     }
 
     await notifyUserBookingEvent(updatedBooking, 'CANCELLED');

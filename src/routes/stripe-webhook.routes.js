@@ -22,8 +22,21 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    console.log(
+      '[stripe-webhook] received',
+      'eventId:', event.id,
+      'type:', event.type,
+      'objectId:', event.data?.object?.id || '',
+      'purpose:', event.data?.object?.metadata?.purpose || ''
+    );
     const eventRecord = await recordStripeEvent(event);
     const processed = await processWebhookEvent(eventRecord);
+    console.log(
+      '[stripe-webhook] processed',
+      'eventId:', event.id,
+      'type:', event.type,
+      'status:', processed?.status || eventRecord.status
+    );
     res.json({ received: true, status: processed?.status || eventRecord.status });
   } catch (err) {
     console.error('[stripe-webhook] handler failed:', err);

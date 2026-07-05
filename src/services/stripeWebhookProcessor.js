@@ -176,6 +176,13 @@ async function handlePayoutFailed(tx, stripePayout) {
 
 async function handleStripeEvent(tx, event) {
   const object = event.data?.object;
+  console.log(
+    '[stripe-processor] event_received',
+    'type:', event.type,
+    'objectId:', object?.id || '',
+    'purpose:', object?.metadata?.purpose || '',
+    'bookingId:', object?.metadata?.bookingId || ''
+  );
   switch (event.type) {
     case 'account.updated':
       await syncConnectedAccount(tx, event.data.object);
@@ -196,12 +203,27 @@ async function handleStripeEvent(tx, event) {
       return [];
     case 'payment_intent.succeeded':
       if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        console.log(
+          '[stripe-processor] routing_booking_payment_success',
+          'paymentIntentId:', object.id,
+          'bookingId:', object.metadata?.bookingId || ''
+        );
         return markBookingPaymentSucceededTx(tx, object);
       }
+      console.log(
+        '[stripe-processor] routing_wallet_topup_success',
+        'paymentIntentId:', object?.id || ''
+      );
       await creditWalletForTopUp(tx, object);
       return [];
     case 'payment_intent.payment_failed':
       if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        console.log(
+          '[stripe-processor] routing_booking_payment_failed',
+          'paymentIntentId:', object.id,
+          'bookingId:', object.metadata?.bookingId || '',
+          'message:', object?.last_payment_error?.message || 'Payment failed'
+        );
         return markBookingPaymentFailedTx(
           tx,
           object,
@@ -209,12 +231,25 @@ async function handleStripeEvent(tx, event) {
           object?.last_payment_error?.message || 'Payment failed'
         );
       }
+      console.log(
+        '[stripe-processor] routing_wallet_topup_failed',
+        'paymentIntentId:', object?.id || ''
+      );
       await markTopUp(tx, object, 'FAILED', object?.last_payment_error?.message || 'Payment failed');
       return [];
     case 'payment_intent.canceled':
       if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        console.log(
+          '[stripe-processor] routing_booking_payment_canceled',
+          'paymentIntentId:', object.id,
+          'bookingId:', object.metadata?.bookingId || ''
+        );
         return markBookingPaymentFailedTx(tx, object, 'CANCELED', 'Payment canceled');
       }
+      console.log(
+        '[stripe-processor] routing_wallet_topup_canceled',
+        'paymentIntentId:', object?.id || ''
+      );
       await markTopUp(tx, object, 'CANCELED', 'Payment canceled');
       return [];
     case 'charge.refunded':
