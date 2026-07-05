@@ -35,7 +35,12 @@ jest.mock('../../lib/pushNotifications', () => ({
   notifyUserBookingEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../services/bookingPayments', () => ({
+  refundLatestBookingPayment: jest.fn().mockResolvedValue({ id: 're_1' }),
+}));
+
 const prisma = require('../../lib/prisma');
+const { refundLatestBookingPayment } = require('../../services/bookingPayments');
 
 async function invokeRoute(router, method, routePath, reqOverrides = {}) {
   const req = {
@@ -109,13 +114,13 @@ describe('MVP policy routes', () => {
     delete process.env.ENFORCE_REGULAR_BOOKING_MODE;
   });
 
-  test('customer cancellation after assigned grace window refunds net amount and credits driver share', async () => {
+  test('customer cancellation after assigned grace window refunds Stripe net amount and credits driver share', async () => {
     const booking = {
       id: 'booking-1',
       userId: 'user-1',
       vehicleType: 'VAN_7FT',
       status: 'DRIVER_ASSIGNED',
-      paymentMethod: 'WALLET',
+      paymentMethod: 'STRIPE',
       paymentStatus: 'COMPLETED',
       finalPrice: 30,
       estimatedPrice: 30,
@@ -126,15 +131,7 @@ describe('MVP policy routes', () => {
       booking: {
         update: jest
           .fn()
-          .mockResolvedValueOnce({ ...booking, status: 'CANCELLED', paymentStatus: 'REFUNDED' })
-          .mockResolvedValueOnce({ ...booking, status: 'CANCELLED', paymentStatus: 'REFUNDED' }),
-      },
-      wallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 100 }),
-        update: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
-      },
-      walletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'wallet-tx-1' }),
+          .mockResolvedValueOnce({ ...booking, status: 'CANCELLED', paymentStatus: 'COMPLETED' }),
       },
       driverWallet: {
         findUnique: jest.fn().mockResolvedValue({ id: 'driver-wallet-1', balance: 0 }),
@@ -163,8 +160,10 @@ describe('MVP policy routes', () => {
         cancellationPlatformShare: 1.5,
       }),
     }));
-    expect(tx.walletTransaction.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ type: 'REFUND', amount: 25 }),
+    expect(refundLatestBookingPayment).toHaveBeenCalledWith({
+      booking: expect.objectContaining({ id: 'booking-1' }),
+      amount: 25,
+      reason: 'Customer cancellation refund',
     });
     expect(tx.driverWalletTransaction.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ type: 'ADJUSTMENT', amount: 3.5 }),
@@ -203,7 +202,7 @@ describe('MVP policy routes', () => {
     });
   });
 
-  test('admin approval charges customer wallet and reimburses driver', async () => {
+  test('admin approval leaves extra charge awaiting customer Stripe payment', async () => {
     const charge = {
       id: 'charge-1',
       bookingId: 'booking-1',
@@ -216,21 +215,7 @@ describe('MVP policy routes', () => {
     };
     const tx = {
       bookingExtraCharge: {
-        update: jest.fn().mockResolvedValue({ ...charge, status: 'APPROVED' }),
-      },
-      wallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 100 }),
-        update: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
-      },
-      walletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'wallet-tx-1' }),
-      },
-      driverWallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'driver-wallet-1', balance: 0 }),
-        update: jest.fn().mockResolvedValue({ id: 'driver-wallet-1' }),
-      },
-      driverWalletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'driver-wallet-tx-1' }),
+        update: jest.fn().mockResolvedValue({ ...charge, status: 'APPROVED_PENDING_PAYMENT' }),
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -245,12 +230,9 @@ describe('MVP policy routes', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(tx.walletTransaction.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ amount: -4, description: 'parking pass-through charge' }),
-    });
-    expect(tx.driverWalletTransaction.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ amount: 4, description: 'parking reimbursement' }),
-    });
+    expect(tx.bookingExtraCharge.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'APPROVED_PENDING_PAYMENT' }),
+    }));
   });
 
   test('driver SOS returns emergency call intent and creates urgent ticket', async () => {

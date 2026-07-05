@@ -1,7 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { DRIVER_COMMISSION_RATE } = require('../services/businessConfig');
-const { driverEarningFromGross } = require('../lib/money');
+const { taxExclusiveSplitFromGross } = require('../lib/money');
 const { parsePagination } = require('../lib/pagination');
 const { AppError } = require('../middleware/errorHandler');
 
@@ -36,7 +36,7 @@ router.get('/stats', async (req, res, next) => {
     const period = req.query.period === 'monthly' ? 'monthly' : 'weekly';
     const { start, end } = dateWindowFromPeriod(period);
 
-    const [bookingAgg, commissionAgg] = await Promise.all([
+    const [bookingAgg, commissionAgg, taxCollectedAgg, taxPayableAgg] = await Promise.all([
       prisma.booking.aggregate({
         where: {
           status: 'DELIVERED',
@@ -52,10 +52,27 @@ router.get('/stats', async (req, res, next) => {
         },
         _sum: { platformFeeAmount: true },
       }),
+      prisma.taxLiability.aggregate({
+        where: {
+          createdAt: { gte: start, lte: end },
+          status: { not: 'VOID' },
+        },
+        _sum: { taxAmount: true },
+      }),
+      prisma.taxLiability.aggregate({
+        where: {
+          createdAt: { gte: start, lte: end },
+          status: 'PENDING',
+        },
+        _sum: { taxAmount: true },
+      }),
     ]);
 
     const totalRevenue = bookingAgg._sum.finalPrice || 0;
     const totalCommission = commissionAgg._sum.platformFeeAmount || 0;
+    const taxCollected = taxCollectedAgg._sum.taxAmount || 0;
+    const taxPayable = taxPayableAgg._sum.taxAmount || 0;
+    const netRevenueBeforeTax = totalRevenue - taxCollected;
     const orderCount = bookingAgg._count.id || 0;
     const avgCommissionPerOrder = orderCount > 0 ? totalCommission / orderCount : 0;
 
@@ -63,7 +80,10 @@ router.get('/stats', async (req, res, next) => {
       success: true,
       data: {
         totalRevenue,
+        netRevenueBeforeTax,
         totalCommission,
+        taxCollected,
+        taxPayable,
         avgCommissionPerOrder,
         orderCount,
         period,
@@ -124,7 +144,7 @@ router.get('/transactions', async (req, res, next) => {
 
     const where = { status: 'DELIVERED' };
 
-    const VALID_PAYMENT_METHODS = ['CASH', 'UPI', 'CARD', 'WALLET'];
+    const VALID_PAYMENT_METHODS = ['STRIPE', 'CASH', 'UPI', 'CARD', 'WALLET'];
     const VALID_PAYMENT_STATUSES = ['COMPLETED', 'PENDING', 'FAILED', 'REFUNDED'];
 
     if (req.query.paymentMethod && req.query.paymentMethod !== 'all') {
@@ -240,7 +260,7 @@ router.get('/transactions/:id', async (req, res, next) => {
 
     // Compute fee breakdown using the canonical money helper
     const gross = booking.finalPrice || booking.estimatedPrice || 0;
-    const breakdown = driverEarningFromGross(gross);
+    const breakdown = taxExclusiveSplitFromGross(gross);
     const driverShare = breakdown.driverAmount;
     const platformFee = breakdown.platformFeeAmount;
 
@@ -267,6 +287,9 @@ router.get('/transactions/:id', async (req, res, next) => {
         delivery: booking.deliveryAddress?.address || '',
         feeBreakdown: {
           grossAmount: gross,
+          taxableAmount: breakdown.taxableAmount,
+          taxAmount: breakdown.taxAmount,
+          taxRate: breakdown.taxRate,
           distance: booking.distance,
           waitTimeCharge: booking.waitTimeCharge,
           discountAmount: booking.discountAmount,

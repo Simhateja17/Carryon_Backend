@@ -2,6 +2,11 @@ const prisma = require('../lib/prisma');
 const { creditStripeTopUp } = require('./walletLedger');
 const { failPayout } = require('./driverPayoutReconciliation');
 const { createDriverNotificationWithPush } = require('./driverNotifications');
+const {
+  BOOKING_PAYMENT_PURPOSE,
+  markBookingPaymentFailedTx,
+  markBookingPaymentSucceededTx,
+} = require('./bookingPayments');
 
 async function creditWalletForTopUp(tx, paymentIntent) {
   const paymentIntentId = paymentIntent.id;
@@ -170,16 +175,17 @@ async function handlePayoutFailed(tx, stripePayout) {
 }
 
 async function handleStripeEvent(tx, event) {
+  const object = event.data?.object;
   switch (event.type) {
     case 'account.updated':
       await syncConnectedAccount(tx, event.data.object);
-      break;
+      return [];
     case 'payout.paid':
       await handlePayoutPaid(tx, event.data.object);
-      break;
+      return [];
     case 'payout.failed':
       await handlePayoutFailed(tx, event.data.object);
-      break;
+      return [];
     case 'account.external_account.updated':
       if (event.account) {
         await tx.driver.updateMany({
@@ -187,28 +193,37 @@ async function handleStripeEvent(tx, event) {
           data: { stripePayoutsEnabled: false },
         });
       }
-      break;
+      return [];
     case 'payment_intent.succeeded':
-      await creditWalletForTopUp(tx, event.data.object);
-      break;
+      if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        return markBookingPaymentSucceededTx(tx, object);
+      }
+      await creditWalletForTopUp(tx, object);
+      return [];
     case 'payment_intent.payment_failed':
-      await markTopUp(
-        tx,
-        event.data.object,
-        'FAILED',
-        event.data.object?.last_payment_error?.message || 'Payment failed'
-      );
-      break;
+      if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        return markBookingPaymentFailedTx(
+          tx,
+          object,
+          'FAILED',
+          object?.last_payment_error?.message || 'Payment failed'
+        );
+      }
+      await markTopUp(tx, object, 'FAILED', object?.last_payment_error?.message || 'Payment failed');
+      return [];
     case 'payment_intent.canceled':
-      await markTopUp(tx, event.data.object, 'CANCELED', 'Payment canceled');
-      break;
+      if (object?.metadata?.purpose === BOOKING_PAYMENT_PURPOSE) {
+        return markBookingPaymentFailedTx(tx, object, 'CANCELED', 'Payment canceled');
+      }
+      await markTopUp(tx, object, 'CANCELED', 'Payment canceled');
+      return [];
     case 'charge.refunded':
       if (event.data.object?.payment_intent) {
         await markTopUp(tx, { id: event.data.object.payment_intent }, 'REFUNDED', 'Payment refunded');
       }
-      break;
+      return [];
     default:
-      break;
+      return [];
   }
 }
 

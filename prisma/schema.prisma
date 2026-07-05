@@ -33,6 +33,7 @@ enum PaymentMethod {
   UPI
   CARD
   WALLET
+  STRIPE
 }
 
 enum PaymentStatus {
@@ -146,6 +147,12 @@ enum StripeLedgerStatus {
   REFUNDED
 }
 
+enum TaxLiabilityStatus {
+  PENDING
+  REMITTED
+  VOID
+}
+
 enum PushPlatform {
   ANDROID
   IOS
@@ -242,12 +249,14 @@ model User {
 
   addresses      Address[]
   bookings       Booking[]
+  bookingPayments BookingPayment[]
   wallet         Wallet?
   userCoupons    UserCoupon[]
   referralsMade  Referral[]      @relation("Referrer")
   referralsUsed  Referral[]      @relation("Referee")
   supportTickets SupportTicket[]
   invoices       Invoice[]
+  taxLiabilities TaxLiability[]
   pushDevices    PushDevice[]
   topUpPayments  WalletTopUpPayment[]
 }
@@ -643,12 +652,41 @@ model Booking {
   supportTickets    SupportTicket[]
   driverSupportTickets DriverSupportTicket[]
   invoice           Invoice?
+  taxLiability      TaxLiability?
   bookingRejections BookingRejection[]
   idempotencyKeys   IdempotencyKey[]
   lifecycleEvents   DeliveryLifecycleEvent[]
   extraCharges      BookingExtraCharge[]
   adjustments        BookingAdjustment[]
   plannedRouteSnapshots PlannedRouteSnapshot[]
+  payments           BookingPayment[]
+}
+
+model BookingPayment {
+  id                    String             @id @default(uuid())
+  bookingId             String
+  userId                String
+  amount                Float
+  amountMinor           Int
+  currency              String             @default("myr")
+  status                StripeLedgerStatus @default(PENDING)
+  stripePaymentIntentId String             @unique
+  stripeRefundId        String?
+  refundedAmount        Float              @default(0)
+  refundStatus          StripeLedgerStatus?
+  failureMessage        String?
+  paidAt                DateTime?
+  refundedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([bookingId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([refundStatus, createdAt])
 }
 
 model BookingAdjustment {
@@ -994,10 +1032,34 @@ model Invoice {
   tax           Float    @default(0)
   discount      Float    @default(0)
   total         Float    @default(0)
-  taxRate       Float    @default(0.05)
+  taxRate       Float    @default(0.06)
   currency      String   @default("MYR")
   issuedAt      DateTime @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
   user    User    @relation(fields: [userId], references: [id])
+}
+
+model TaxLiability {
+  id                String             @id @default(uuid())
+  bookingId         String             @unique
+  userId            String
+  taxableAmount     Float              @default(0)
+  taxAmount         Float              @default(0)
+  totalAmount       Float              @default(0)
+  taxRate           Float              @default(0.06)
+  currency          String             @default("MYR")
+  status            TaxLiabilityStatus @default(PENDING)
+  source            String             @default("BOOKING")
+  remittedAt        DateTime?
+  remittedByAdminId String?
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }

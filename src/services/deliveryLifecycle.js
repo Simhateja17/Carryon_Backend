@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { haversineKm } = require('../lib/distance');
-const { driverEarningFromGross } = require('../lib/money');
+const { taxExclusiveSplitFromGross } = require('../lib/money');
 const { notifyUserBookingEvent } = require('../lib/pushNotifications');
 const {
   OFFER_EXPIRY_MS,
@@ -18,10 +18,7 @@ const {
   upsertPickupWaitTimeAdjustmentTx,
 } = require('./bookingAdjustments');
 const { getOrCreateInvoiceForBooking } = require('./invoices');
-const {
-  creditDriverAdjustmentTx,
-  debitBookingAdjustmentTx,
-} = require('./walletLedger');
+const { upsertBookingTaxLiabilityTx } = require('./taxLiabilities');
 const {
   generateDeliveryOtp,
   deliveryOtpWindow,
@@ -130,7 +127,7 @@ function toDeliveryJob(booking) {
     customerPhone: booking.user?.phone || '',
     packageType: booking.vehicleType,
     packageSize: 'MEDIUM',
-    estimatedEarnings: driverEarningFromGross(booking.finalPrice || booking.estimatedPrice).driverAmount,
+    estimatedEarnings: taxExclusiveSplitFromGross(booking.finalPrice || booking.estimatedPrice).driverAmount,
     distance: booking.distance,
     estimatedDuration: booking.duration,
     createdAt: booking.createdAt.toISOString(),
@@ -480,6 +477,8 @@ async function completeDelivery({ booking, actor, payload, locationEvidence }) {
       create: { bookingId: booking.id, completedAt: now },
     });
 
+    await upsertBookingTaxLiabilityTx(tx, deliveredBooking);
+
     if (booking.driverId) {
       await creditDriverEarning(tx, booking.driverId, deliveredBooking);
       await tx.driver.update({
@@ -641,23 +640,8 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
               bookingId: booking.id,
               waitTimeMinutes: waitCharge.waitTimeMinutes,
               waitTimeCharge: waitCharge.waitTimeCharge,
+              status: 'PENDING_PAYMENT',
             });
-            await debitBookingAdjustmentTx(
-              tx,
-              booking.userId,
-              booking.id,
-              waitCharge.waitTimeCharge,
-              'Pickup wait-time charge'
-            );
-            if (booking.driverId) {
-              await creditDriverAdjustmentTx(
-                tx,
-                booking.driverId,
-                booking.id,
-                waitCharge.waitTimeCharge,
-                'Pickup wait-time compensation'
-              );
-            }
           }
           await recordAudit(tx, {
             actor: { actorId: actor.actorId, actorType: actor.actorType },

@@ -15,10 +15,11 @@ const {
 const { quoteBookingFare } = require('../services/bookingPricing');
 const {
   creditDriverAdjustmentTx,
-  reserveBookingPayment,
-  refundBookingTx,
 } = require('../services/walletLedger');
-const { notifyNearbyDrivers } = require('../services/dispatch');
+const {
+  createOrReuseBookingPaymentIntent,
+  refundLatestBookingPayment,
+} = require('../services/bookingPayments');
 const { recordAudit } = require('../services/auditLog');
 const { computeCancellationOutcome, isRegularBookingMode, validateBookingLocations, validateOptionalBookingLocations } = require('../services/bookingPolicy');
 const { executeUserLifecycleCommand } = require('../services/deliveryLifecycle');
@@ -83,7 +84,7 @@ router.post('/', async (req, res, next) => {
       receiverEmail, deliveryMode, offloading, notes
     } = parseBody(bookingCreateSchema, req.body);
 
-    console.log('[booking] POST /api/bookings — userId:', req.user.userId, 'vehicleType:', vehicleType, 'paymentMethod:', paymentMethod || 'CASH');
+    console.log('[booking] POST /api/bookings — userId:', req.user.userId, 'vehicleType:', vehicleType, 'paymentMethod:', paymentMethod || 'STRIPE');
 
     const idempotencyKey = idempotencyKeyFromRequest(req);
     if (!validateIdempotencyKey(idempotencyKey)) {
@@ -91,7 +92,13 @@ router.post('/', async (req, res, next) => {
     }
     const idempotentBooking = await findIdempotentBooking(req.user.userId, idempotencyKey);
     if (idempotentBooking) {
-      return res.status(201).json({ success: true, data: idempotentBooking, idempotent: true });
+      const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+      if (!user) return next(new AppError('User not found', 404));
+      if (idempotentBooking.paymentStatus === 'COMPLETED') {
+        return res.status(201).json({ success: true, data: { booking: idempotentBooking, payment: null }, idempotent: true });
+      }
+      const payment = await createOrReuseBookingPaymentIntent({ booking: idempotentBooking, user });
+      return res.status(201).json({ success: true, data: { booking: idempotentBooking, payment }, idempotent: true });
     }
     await prisma.idempotencyKey.deleteMany({
       where: { userId: req.user.userId, key: idempotencyKey, expiresAt: { lte: new Date() } },
@@ -121,10 +128,12 @@ router.post('/', async (req, res, next) => {
       deliveryMode,
       offloading,
     });
-    const normalizedPaymentMethod = String(paymentMethod || 'WALLET').toUpperCase();
-    if (normalizedPaymentMethod !== 'WALLET') {
-      return next(new AppError('Wallet payment is required. Please top up your wallet before booking.', 400));
+    const normalizedPaymentMethod = String(paymentMethod || 'STRIPE').toUpperCase();
+    if (normalizedPaymentMethod !== 'STRIPE') {
+      return next(new AppError('Stripe payment is required before booking dispatch.', 400));
     }
+    const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+    if (!user) return next(new AppError('User not found', 404));
 
     let booking = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -175,16 +184,15 @@ router.post('/', async (req, res, next) => {
               finalPrice: amountDue,
               distance: quote.distance,
               duration: quote.duration,
-              paymentMethod: 'WALLET',
-              paymentStatus: 'COMPLETED',
+              paymentMethod: 'STRIPE',
+              paymentStatus: 'PENDING',
               otp: generatePickupOtp(),
               dispatchSource: 'USER_APP',
-              status: 'SEARCHING_DRIVER',
+              status: 'PENDING',
             },
             include: bookingIncludes,
           });
 
-          await reserveBookingPayment(tx, req.user.userId, createdBooking.id, orderCode, amountDue);
           await tx.idempotencyKey.create({
             data: {
               userId: req.user.userId,
@@ -220,14 +228,10 @@ router.post('/', async (req, res, next) => {
       }
     }
 
-    console.log('[booking] Created booking id:', booking.id, 'status:', booking.status, 'estimatedPrice:', booking.estimatedPrice);
+    const payment = await createOrReuseBookingPaymentIntent({ booking, user });
+    console.log('[booking] Created pending booking id:', booking.id, 'status:', booking.status, 'estimatedPrice:', booking.estimatedPrice);
 
-    // Fire-and-forget dispatch to nearby drivers
-    notifyNearbyDrivers(booking).catch((err) => {
-      console.error('[booking] FCM push to drivers failed:', err.message);
-    });
-
-    res.status(201).json({ success: true, data: booking });
+    res.status(201).json({ success: true, data: { booking, payment } });
   } catch (err) {
     next(err);
   }
@@ -370,6 +374,10 @@ router.get('/:id/eta', async (req, res, next) => {
 
     switch (booking.status) {
       case 'PENDING':
+        statusMessage = booking.paymentStatus === 'PENDING'
+          ? 'Payment pending. Complete payment to start driver search.'
+          : 'Booking pending.';
+        break;
       case 'SEARCHING_DRIVER':
         statusMessage = 'Looking for a driver nearby...';
         break;
@@ -433,8 +441,9 @@ router.post('/:id/cancel', async (req, res, next) => {
       return next(new AppError(`Cannot cancel a ${booking.status.toLowerCase()} booking`, 400));
     }
 
+    let cancellationOutcome = null;
     const updatedBooking = await prisma.$transaction(async (tx) => {
-      const shouldRefund = booking.paymentMethod === 'WALLET' && booking.paymentStatus === 'COMPLETED';
+      const shouldRefund = booking.paymentMethod === 'STRIPE' && booking.paymentStatus === 'COMPLETED';
       const cancellation = shouldRefund
         ? computeCancellationOutcome({ booking, actorType: 'USER' })
         : {
@@ -454,10 +463,10 @@ router.post('/:id/cancel', async (req, res, next) => {
           cancellationFee: cancellation.fee,
           cancellationDriverShare: cancellation.driverShare,
           cancellationPlatformShare: cancellation.platformShare,
-          ...(shouldRefund && { paymentStatus: 'REFUNDED' }),
         },
         include: bookingIncludes,
       });
+      cancellationOutcome = { ...cancellation, shouldRefund };
       await recordAudit(tx, {
         actor: { actorId: req.user.userId, actorType: 'USER' },
         action: 'BOOKING_CANCELLED',
@@ -473,10 +482,6 @@ router.post('/:id/cancel', async (req, res, next) => {
           refundAmount: cancellation.refundAmount,
         },
       });
-      if (shouldRefund && cancellation.refundAmount > 0) {
-        console.log('[booking] Cancel refund — bookingId:', req.params.id, 'refund amount:', cancellation.refundAmount);
-        await refundBookingTx(tx, req.user.userId, req.params.id, cancellation.refundAmount);
-      }
       if (cancellation.driverShare > 0 && booking.driverId) {
         await creditDriverAdjustmentTx(
           tx,
@@ -489,6 +494,19 @@ router.post('/:id/cancel', async (req, res, next) => {
       return updated;
     });
     console.log('[booking] Cancelled — bookingId:', req.params.id, 'previousStatus:', booking.status);
+
+    if (cancellationOutcome?.shouldRefund && cancellationOutcome.refundAmount > 0) {
+      try {
+        console.log('[booking] Stripe cancel refund — bookingId:', req.params.id, 'refund amount:', cancellationOutcome.refundAmount);
+        await refundLatestBookingPayment({
+          booking,
+          amount: cancellationOutcome.refundAmount,
+          reason: 'Customer cancellation refund',
+        });
+      } catch (refundErr) {
+        console.error('[booking] Stripe refund failed — bookingId:', req.params.id, refundErr.message);
+      }
+    }
 
     await notifyUserBookingEvent(updatedBooking, 'CANCELLED');
 

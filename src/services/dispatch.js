@@ -4,10 +4,18 @@
 
 const prisma = require('../lib/prisma');
 const { haversineKm } = require('../lib/distance');
-const { driverEarningFromGross } = require('../lib/money');
+const { taxExclusiveSplitFromGross } = require('../lib/money');
 const { sendPushToDriverIds } = require('../lib/pushNotifications');
 const { DRIVER_SEARCH_RADIUS_KM, OFFER_EXPIRY_MS } = require('./businessConfig');
 const { evaluateDriverEligibility } = require('./driverEligibility');
+
+// Job-request pushes ring on the app's dedicated custom-sound channel.
+// Android: raw resource name (no extension). iOS/APNs: bundled file name.
+const JOB_REQUEST_PUSH_OPTIONS = {
+  androidChannelId: 'carryon_job_requests',
+  androidSound: 'alert_sonar',
+  apnsSound: 'alert_sonar.caf',
+};
 
 const DRIVER_DISPATCH_SELECT = {
   id: true,
@@ -31,6 +39,7 @@ const DRIVER_DISPATCH_SELECT = {
 function activeOfferWhereClause(extraWhere = {}) {
   return {
     status: 'SEARCHING_DRIVER',
+    paymentStatus: 'COMPLETED',
     driverId: null,
     createdAt: { gte: new Date(Date.now() - OFFER_EXPIRY_MS) },
     ...extraWhere,
@@ -38,7 +47,7 @@ function activeOfferWhereClause(extraWhere = {}) {
 }
 
 function bookingPayout(booking) {
-  return driverEarningFromGross(booking.finalPrice || booking.estimatedPrice || 0).driverAmount;
+  return taxExclusiveSplitFromGross(booking.finalPrice || booking.estimatedPrice || 0).driverAmount;
 }
 
 function sortByPayout(bookings) {
@@ -146,6 +155,11 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
 // ── Notify drivers after booking creation ───────────────────
 
 async function notifyNearbyDrivers(booking) {
+  if (booking.status !== 'SEARCHING_DRIVER' || booking.paymentStatus !== 'COMPLETED') {
+    console.warn('[dispatch] refusing to notify drivers for unpaid/inactive booking:', booking.id, booking.status, booking.paymentStatus);
+    return;
+  }
+
   const drivers = await prisma.driver.findMany({
     where: { isOnline: true },
     select: DRIVER_DISPATCH_SELECT,
@@ -169,7 +183,8 @@ async function notifyNearbyDrivers(booking) {
   const result = await sendPushToDriverIds(
     nearbyDriverIds,
     { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },
-    { type: 'JOB_REQUEST', bookingId: booking.id }
+    { type: 'JOB_REQUEST', bookingId: booking.id },
+    JOB_REQUEST_PUSH_OPTIONS
   );
 
   console.log(
@@ -243,7 +258,8 @@ async function notifyDriversForAdminBooking(booking, driverIds) {
         bookingId: booking.id,
         source: 'admin',
         targeted: isDirectTargeted ? 'true' : 'false',
-      }
+      },
+      JOB_REQUEST_PUSH_OPTIONS
     );
   }
 

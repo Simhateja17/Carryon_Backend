@@ -2,10 +2,11 @@
 // Owns Booking state transitions, pricing, settlement, and
 // cancellation. Routes are thin HTTP adapters that call here.
 
-const { driverEarningFromGross, money } = require('../lib/money');
+const { taxExclusiveSplitFromGross, money } = require('../lib/money');
 const { notifyUserBookingEvent } = require('../lib/pushNotifications');
 const { numericOtp } = require('../lib/otp');
 const { DELIVERY_OTP_TTL_MS } = require('./businessConfig');
+const { upsertBookingTaxLiabilityTx } = require('./taxLiabilities');
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -103,8 +104,10 @@ async function settleDeliveredBooking(tx, booking, now, deliveryProofUrl = null)
     update: { completedAt: now },
   });
 
+  await upsertBookingTaxLiabilityTx(tx, updated);
+
   if (booking.driverId) {
-    await creditDriverEarning(tx, booking.driverId, booking);
+    await creditDriverEarning(tx, booking.driverId, updated);
 
     if (!booking.deliveredAt) {
       await tx.driver.update({
@@ -130,7 +133,7 @@ async function creditDriverEarning(tx, driverId, booking) {
   });
   if (existingEarning) return;
 
-  const payout = driverEarningFromGross(booking.finalPrice || booking.estimatedPrice);
+  const payout = taxExclusiveSplitFromGross(booking.finalPrice || booking.estimatedPrice);
   const earning = payout.driverAmount;
   await tx.driverWalletTransaction.create({
     data: {

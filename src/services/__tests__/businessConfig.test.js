@@ -44,8 +44,8 @@ describe('Business Config', () => {
     expect(config.OFFER_EXPIRY_MS).toBeGreaterThan(0);
   });
 
-  test('valid payment methods includes WALLET', () => {
-    expect(config.VALID_PAYMENT_METHODS).toContain('WALLET');
+  test('valid customer payment methods are Stripe-only', () => {
+    expect(config.VALID_PAYMENT_METHODS).toEqual(['STRIPE']);
   });
 
   test('canonical vehicle catalog covers every supported vehicle type', () => {

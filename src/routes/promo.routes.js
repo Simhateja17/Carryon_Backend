@@ -7,6 +7,9 @@ const { REFERRAL_REWARD_AMOUNT } = require('../services/businessConfig');
 
 const router = Router();
 router.use(authenticate);
+router.use((req, res, next) => {
+  next(new AppError('Promo codes and customer wallet credits are disabled for Stripe per-booking payments.', 410));
+});
 
 // POST /api/promo/validate
 router.post('/validate', async (req, res, next) => {

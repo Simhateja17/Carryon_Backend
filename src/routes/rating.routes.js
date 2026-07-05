@@ -2,7 +2,6 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { authenticate } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
-const { applyUserTipTx } = require('../services/walletLedger');
 
 const router = Router();
 router.use(authenticate);
@@ -14,6 +13,9 @@ router.post('/:bookingId', async (req, res, next) => {
     console.log('[rating] POST rating — userId:', req.user.userId, 'bookingId:', req.params.bookingId, 'rating:', rating, 'tipAmount:', tipAmount || 0);
     if (!rating || rating < 1 || rating > 5) {
       return next(new AppError('Rating must be between 1 and 5', 400));
+    }
+    if (Number(tipAmount || 0) > 0) {
+      return next(new AppError('Tips are temporarily disabled until Stripe per-booking tip payments are available.', 400));
     }
 
     const booking = await prisma.booking.findUnique({
@@ -34,13 +36,13 @@ router.post('/:bookingId', async (req, res, next) => {
         rating,
         review: review || null,
         tags: tags || [],
-        tipAmount: tipAmount || 0,
+        tipAmount: 0,
       },
       update: {
         rating,
         review: review || null,
         tags: tags || [],
-        tipAmount: tipAmount || 0,
+        tipAmount: 0,
       },
     });
 
@@ -63,11 +65,6 @@ router.post('/:bookingId', async (req, res, next) => {
         where: { id: booking.driverId },
         data: { rating: newAvgRating },
       });
-
-      // If tip, credit to driver wallet (future: driver wallet)
-      if (tipAmount && tipAmount > 0) {
-        await prisma.$transaction((tx) => applyUserTipTx(tx, req.user.userId, req.params.bookingId, tipAmount));
-      }
     }
 
     res.json({ success: true, data: order });

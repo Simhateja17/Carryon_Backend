@@ -6,6 +6,7 @@ const { attachLiveTracking } = require('./src/services/liveTracking');
 const { startWebhookRetryLoop } = require('./src/services/webhookInbox');
 const { startDriverPayoutReconciliationLoop } = require('./src/services/driverPayoutReconciliation');
 const { startDocumentExpiryLoop } = require('./src/services/driverEligibility');
+const { startPendingBookingPaymentExpiryLoop } = require('./src/services/bookingPayments');
 const { validateSupabaseConnection } = require('./src/lib/supabase');
 
 const DISCOVERY_PORT = 4999;
@@ -60,6 +61,7 @@ async function start() {
     console.log(`CarryOn backend running on port ${PORT}`);
     startDiscoveryServer(PORT);
     startWebhookRetryLoop();
+    startPendingBookingPaymentExpiryLoop();
     startDriverPayoutReconciliationLoop();
     startDocumentExpiryLoop();
   });

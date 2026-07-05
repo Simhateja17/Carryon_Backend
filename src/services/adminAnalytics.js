@@ -3,7 +3,6 @@ const prisma = require('../lib/prisma');
 const ANALYTICS_TIMEZONE = 'Asia/Kuala_Lumpur';
 const TIMEZONE_OFFSET_MINUTES = 8 * 60;
 const ACTIVE_STATUSES = [
-  'PENDING',
   'SEARCHING_DRIVER',
   'DRIVER_ASSIGNED',
   'DRIVER_ARRIVED',

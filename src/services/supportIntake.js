@@ -23,11 +23,10 @@ const customerTree = [
   },
   {
     id: 'customer.payment',
-    label: 'Payment, wallet, or refund',
+    label: 'Payment or refund',
     children: [
       issue('customer.payment.refund', 'Refund request', 'REFUND_REQUEST', 'HIGH', { requiresBooking: true, requiresDetails: true }),
       issue('customer.payment.charge', 'Delivery charge dispute', 'PAYMENT_ISSUE', 'HIGH', { requiresBooking: true, requiresDetails: true }),
-      issue('customer.payment.wallet', 'Wallet or top-up issue', 'PAYMENT_ISSUE', 'HIGH', { requiresDetails: true }),
     ],
   },
   {

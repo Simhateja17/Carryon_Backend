@@ -2,10 +2,6 @@ const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
 const { recordAudit } = require('../services/auditLog');
-const {
-  creditDriverAdjustmentTx,
-  debitBookingAdjustmentTx,
-} = require('../services/walletLedger');
 const { getSignedUrl } = require('../lib/supabase');
 
 const router = Router();
@@ -76,29 +72,13 @@ router.post('/:id/review', async (req, res, next) => {
       const reviewed = await tx.bookingExtraCharge.update({
         where: { id: charge.id },
         data: {
-          status: decision,
+          status: decision === 'APPROVED' ? 'APPROVED_PENDING_PAYMENT' : 'REJECTED',
           reviewedByAdminId: 'ADMIN',
           reviewedAt: new Date(),
+          ...(decision === 'APPROVED' && { note: `${charge.note}\nApproved by admin. Awaiting customer Stripe payment.`.trim() }),
           ...(decision === 'REJECTED' && rejectionReason && { note: `${charge.note}\nRejected: ${rejectionReason}`.trim() }),
         },
       });
-
-      if (decision === 'APPROVED') {
-        await debitBookingAdjustmentTx(
-          tx,
-          charge.booking.userId,
-          charge.bookingId,
-          charge.amount,
-          `${charge.type.toLowerCase()} pass-through charge`
-        );
-        await creditDriverAdjustmentTx(
-          tx,
-          charge.driverId,
-          charge.bookingId,
-          charge.amount,
-          `${charge.type.toLowerCase()} reimbursement`
-        );
-      }
 
       await recordAudit(tx, {
         actor: req.adminActor,
@@ -107,7 +87,7 @@ router.post('/:id/review', async (req, res, next) => {
         entityId: charge.id,
         oldValue: { status: charge.status },
         newValue: {
-          status: decision,
+          status: reviewed.status,
           bookingId: charge.bookingId,
           amount: charge.amount,
           type: charge.type,

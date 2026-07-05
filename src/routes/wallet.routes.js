@@ -11,6 +11,9 @@ const { walletPaySchema, walletTopupIntentSchema } = require('../validation/fina
 
 const router = Router();
 router.use(authenticate);
+router.use((req, res, next) => {
+  next(new AppError('Customer wallet has been retired. Please pay securely per booking.', 410));
+});
 
 // GET /api/wallet
 router.get('/', async (req, res, next) => {

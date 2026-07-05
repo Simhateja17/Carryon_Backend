@@ -99,11 +99,11 @@ async function sendPushToUserIds(userIds, notification, data = {}) {
   };
 }
 
-async function sendPushToDriverIds(driverIds, notification, data = {}) {
+async function sendPushToDriverIds(driverIds, notification, data = {}, options = {}) {
   const targetDriverIds = dedupe(driverIds);
   const devices = await getActivePushDevicesForDrivers(targetDriverIds);
   const tokens = devices.map((device) => device.token);
-  const pushResult = await sendPushNotifications(tokens, notification, data);
+  const pushResult = await sendPushNotifications(tokens, notification, data, options);
   return {
     devices,
     noDeviceActorIds: targetDriverIds.filter((driverId) => !devices.some((device) => device.driverId === driverId)),

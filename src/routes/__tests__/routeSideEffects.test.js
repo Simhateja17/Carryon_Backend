@@ -5,6 +5,9 @@ jest.mock('../../lib/prisma', () => ({
     update: jest.fn(),
     updateMany: jest.fn(),
   },
+  user: {
+    findUnique: jest.fn(),
+  },
   wallet: {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -97,8 +100,23 @@ jest.mock('../../services/bookingPricing', () => ({
   }),
 }));
 
+jest.mock('../../services/bookingPayments', () => ({
+  createOrReuseBookingPaymentIntent: jest.fn().mockResolvedValue({
+    paymentIntentId: 'pi_booking_1',
+    clientSecret: 'pi_booking_1_secret_test',
+    amount: 12.29,
+    currency: 'myr',
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  }),
+  refundLatestBookingPayment: jest.fn().mockResolvedValue({ id: 're_booking_1' }),
+}));
+
 const prisma = require('../../lib/prisma');
 const { notifyNearbyDrivers } = require('../../services/dispatch');
+const {
+  createOrReuseBookingPaymentIntent,
+  refundLatestBookingPayment,
+} = require('../../services/bookingPayments');
 
 function bookingPayload() {
   return {
@@ -118,7 +136,7 @@ function bookingPayload() {
       contactEmail: 'receiver@example.com',
     },
     vehicleType: 'CAR',
-    paymentMethod: 'WALLET',
+    paymentMethod: 'STRIPE',
     offloading: false,
     distance: 10,
     duration: 30,
@@ -199,9 +217,16 @@ describe('Booking route side effects', () => {
     jest.clearAllMocks();
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     prisma.idempotencyKey.deleteMany.mockResolvedValue({ count: 0 });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      email: 'customer@example.com',
+      name: 'Customer',
+      phone: '123',
+      stripeCustomerId: 'cus_1',
+    });
   });
 
-  test('booking creation debits wallet with the created booking reference', async () => {
+  test('booking creation creates a pending Stripe payment without dispatching drivers', async () => {
     const tx = {
       address: {
         create: jest
@@ -215,20 +240,14 @@ describe('Booking route side effects', () => {
           id: 'booking-1',
           orderCode: 'ORD-000001',
           userId: 'user-1',
-          status: 'SEARCHING_DRIVER',
+          status: 'PENDING',
+          paymentMethod: 'STRIPE',
+          paymentStatus: 'PENDING',
           estimatedPrice: 11.7,
           finalPrice: 11.7,
           pickupAddress: { latitude: 3.1, longitude: 101.6 },
           deliveryAddress: { latitude: 3.2, longitude: 101.7 },
         }),
-      },
-      wallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 50 }),
-        update: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 38.3 }),
-      },
-      walletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'wallet-txn-1' }),
-        updateMany: jest.fn(),
       },
       idempotencyKey: {
         create: jest.fn().mockResolvedValue({ id: 'idem-1' }),
@@ -246,15 +265,12 @@ describe('Booking route side effects', () => {
     });
 
     expect(response.status).toBe(201);
-    expect(tx.walletTransaction.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          type: 'PAYMENT',
-          referenceId: 'booking-1',
-        }),
-      })
-    );
-    expect(tx.walletTransaction.updateMany).not.toHaveBeenCalled();
+    expect(response.body.data.booking.id).toBe('booking-1');
+    expect(response.body.data.payment.clientSecret).toBe('pi_booking_1_secret_test');
+    expect(createOrReuseBookingPaymentIntent).toHaveBeenCalledWith({
+      booking: expect.objectContaining({ id: 'booking-1', status: 'PENDING' }),
+      user: expect.objectContaining({ id: 'user-1' }),
+    });
     expect(tx.idempotencyKey.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         key: '11111111-1111-4111-8111-111111111111',
@@ -267,7 +283,7 @@ describe('Booking route side effects', () => {
         entityId: 'booking-1',
       }),
     });
-    expect(notifyNearbyDrivers).toHaveBeenCalledWith(expect.objectContaining({ id: 'booking-1' }));
+    expect(notifyNearbyDrivers).not.toHaveBeenCalled();
   });
 
   test('duplicate idempotency key returns original booking without wallet debit', async () => {
@@ -281,7 +297,9 @@ describe('Booking route side effects', () => {
         id: 'booking-1',
         orderCode: 'ORD-000001',
         userId: 'user-1',
-        status: 'SEARCHING_DRIVER',
+        status: 'PENDING',
+        paymentStatus: 'PENDING',
+        paymentMethod: 'STRIPE',
       },
     });
 
@@ -293,6 +311,8 @@ describe('Booking route side effects', () => {
 
     expect(response.status).toBe(201);
     expect(response.body.idempotent).toBe(true);
+    expect(response.body.data.booking.id).toBe('booking-1');
+    expect(response.body.data.payment.clientSecret).toBe('pi_booking_1_secret_test');
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(notifyNearbyDrivers).not.toHaveBeenCalled();
   });
@@ -379,12 +399,12 @@ describe('Booking route side effects', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  test('first-time user cancellation refunds wallet exactly once', async () => {
+  test('first-time user cancellation refunds the Stripe payment exactly once', async () => {
     prisma.booking.findUnique.mockResolvedValue({
       id: 'booking-1',
       userId: 'user-1',
       status: 'SEARCHING_DRIVER',
-      paymentMethod: 'WALLET',
+      paymentMethod: 'STRIPE',
       paymentStatus: 'COMPLETED',
       finalPrice: 25,
       estimatedPrice: 25,
@@ -397,22 +417,12 @@ describe('Booking route side effects', () => {
           id: 'booking-1',
           userId: 'user-1',
           status: 'CANCELLED',
-          paymentMethod: 'WALLET',
-          paymentStatus: 'REFUNDED',
+          paymentMethod: 'STRIPE',
+          paymentStatus: 'COMPLETED',
           finalPrice: 25,
           estimatedPrice: 25,
           })
-          .mockResolvedValueOnce({
-            id: 'booking-1',
-            paymentStatus: 'REFUNDED',
-          }),
-      },
-      wallet: {
-        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', userId: 'user-1', balance: 10 }),
-        update: jest.fn().mockResolvedValue({ id: 'wallet-1', balance: 35 }),
-      },
-      walletTransaction: {
-        create: jest.fn().mockResolvedValue({ id: 'refund-1' }),
+          ,
       },
       auditLog: {
         create: jest.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -426,22 +436,13 @@ describe('Booking route side effects', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(cancelTx.wallet.update).toHaveBeenCalledTimes(1);
-    expect(cancelTx.wallet.update).toHaveBeenCalledWith({
-      where: { id: 'wallet-1' },
-      data: { balance: { increment: 25 } },
+    expect(refundLatestBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundLatestBookingPayment).toHaveBeenCalledWith({
+      booking: expect.objectContaining({ id: 'booking-1' }),
+      amount: 25,
+      reason: 'Customer cancellation refund',
     });
-    expect(cancelTx.walletTransaction.create).toHaveBeenCalledTimes(1);
-    expect(cancelTx.walletTransaction.create).toHaveBeenCalledWith({
-      data: {
-        walletId: 'wallet-1',
-        type: 'REFUND',
-        amount: 25,
-        description: 'Booking cancellation refund',
-        referenceId: 'booking-1',
-      },
-    });
-    expect(cancelTx.auditLog.create).toHaveBeenCalledTimes(2);
+    expect(cancelTx.auditLog.create).toHaveBeenCalledTimes(1);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 

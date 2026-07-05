@@ -70,9 +70,13 @@ initializeFirebase();
  * @param {string[]} tokens - Array of FCM device tokens
  * @param {object} notification - { title, body }
  * @param {object} [data] - Optional data payload
+ * @param {object} [options] - Optional per-message overrides
+ * @param {string} [options.androidChannelId] - Android notification channel id (defaults to the general channel)
+ * @param {string} [options.androidSound] - Android raw resource name, no extension (e.g. "alert_sonar")
+ * @param {string} [options.apnsSound] - APNs bundled sound file name, with extension (e.g. "alert_sonar.caf")
  * @returns {Promise<{ successCount: number, failureCount: number, failedTokens: string[], invalidTokens: string[], cleanedInvalidTokens: number }>}
  */
-async function sendPushNotifications(tokens, notification, data = {}) {
+async function sendPushNotifications(tokens, notification, data = {}, options = {}) {
   if (admin.apps.length === 0) {
     console.warn('[firebase] Not initialized — skipping push notification');
     return {
@@ -100,6 +104,11 @@ async function sendPushNotifications(tokens, notification, data = {}) {
     stringData[key] = String(value);
   }
 
+  const androidChannelId = options.androidChannelId || 'carryon_notifications';
+  const androidSound = options.androidSound || 'default';
+  // APNs custom sounds carry their file extension; the generic default does not.
+  const apnsSound = options.apnsSound || 'default';
+
   const message = {
     notification: {
       title: notification.title,
@@ -109,8 +118,8 @@ async function sendPushNotifications(tokens, notification, data = {}) {
     android: {
       priority: 'high',
       notification: {
-        channelId: 'carryon_notifications',
-        sound: 'default',
+        channelId: androidChannelId,
+        sound: androidSound,
       },
     },
     apns: {
@@ -120,7 +129,7 @@ async function sendPushNotifications(tokens, notification, data = {}) {
             title: notification.title,
             body: notification.body,
           },
-          sound: 'default',
+          sound: apnsSound,
           badge: 1,
         },
       },

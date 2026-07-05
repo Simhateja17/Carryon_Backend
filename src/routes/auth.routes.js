@@ -197,8 +197,6 @@ router.post('/verify-otp', async (req, res, next) => {
       user = await prisma.user.create({
         data: { email, name, phone, isVerified: true },
       });
-      // Create wallet for new user
-      await prisma.wallet.create({ data: { userId: user.id } });
     } else {
       await prisma.user.update({
         where: { email },
@@ -332,7 +330,6 @@ router.post('/sync', authenticateToken, async (req, res, next) => {
       user = await prisma.user.create({
         data: { email, name, phone, isVerified: true },
       });
-      await prisma.wallet.create({ data: { userId: user.id } });
       console.log('[auth] sync — created new user id:', user.id);
     } else {
       console.log('[auth] sync — found existing user id:', user.id);

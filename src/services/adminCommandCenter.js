@@ -3,7 +3,6 @@ const prisma = require('../lib/prisma');
 const DASHBOARD_TIMEZONE = 'Asia/Kuala_Lumpur';
 const TIMEZONE_OFFSET_MINUTES = 8 * 60;
 const ACTIVE_BOOKING_STATUSES = [
-  'PENDING',
   'SEARCHING_DRIVER',
   'DRIVER_ASSIGNED',
   'DRIVER_ARRIVED',
@@ -11,7 +10,7 @@ const ACTIVE_BOOKING_STATUSES = [
   'IN_TRANSIT',
   'ARRIVED_AT_DROP',
 ];
-const ACTIVE_DELIVERY_STATUSES = ACTIVE_BOOKING_STATUSES.filter((status) => status !== 'PENDING');
+const ACTIVE_DELIVERY_STATUSES = ACTIVE_BOOKING_STATUSES;
 const HEATMAP_ROWS = ['Mon-Tue', 'Wed-Thu', 'Fri-Sat', 'Sun'];
 const HEATMAP_COLUMNS = ['00-04', '04-08', '08-12', '12-16', '16-20', '20-24'];
 

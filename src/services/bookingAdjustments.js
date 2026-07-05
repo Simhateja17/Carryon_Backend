@@ -59,7 +59,7 @@ async function findAppliedBookingAdjustments(db, bookingId) {
   return adjustments.map(normalizeAdjustment);
 }
 
-async function upsertPickupWaitTimeAdjustmentTx(tx, { bookingId, waitTimeMinutes, waitTimeCharge }) {
+async function upsertPickupWaitTimeAdjustmentTx(tx, { bookingId, waitTimeMinutes, waitTimeCharge, status = ADJUSTMENT_STATUS_APPLIED }) {
   const amount = money(waitTimeCharge || 0);
   if (amount <= 0) return null;
 
@@ -75,13 +75,13 @@ async function upsertPickupWaitTimeAdjustmentTx(tx, { bookingId, waitTimeMinutes
       type: PICKUP_WAIT_TIME_ADJUSTMENT,
       amount,
       description: 'Pickup wait-time charge',
-      status: ADJUSTMENT_STATUS_APPLIED,
+      status,
       metadata: { waitTimeMinutes },
     },
     update: {
       amount,
       description: 'Pickup wait-time charge',
-      status: ADJUSTMENT_STATUS_APPLIED,
+      status,
       metadata: { waitTimeMinutes },
     },
   });

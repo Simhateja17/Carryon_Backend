@@ -30,9 +30,35 @@ function driverEarningFromGross(grossAmount) {
   };
 }
 
+function taxExclusiveSplitFromGross(grossAmount, taxRate = 0.06) {
+  const grossMinor = toMinorUnits(grossAmount);
+  const normalizedTaxRate = Number.isFinite(Number(taxRate)) && Number(taxRate) > 0 ? Number(taxRate) : 0;
+  const taxableMinor = normalizedTaxRate > 0
+    ? Math.round(grossMinor / (1 + normalizedTaxRate))
+    : grossMinor;
+  const taxMinor = Math.max(grossMinor - taxableMinor, 0);
+  const driverMinor = Math.round(taxableMinor * DRIVER_COMMISSION_RATE);
+  const platformMinor = Math.max(taxableMinor - driverMinor, 0);
+
+  return {
+    grossAmount: fromMinorUnits(grossMinor),
+    grossMinor,
+    taxableAmount: fromMinorUnits(taxableMinor),
+    taxableMinor,
+    taxAmount: fromMinorUnits(taxMinor),
+    taxMinor,
+    taxRate: normalizedTaxRate,
+    driverAmount: fromMinorUnits(driverMinor),
+    driverMinor,
+    platformFeeAmount: fromMinorUnits(platformMinor),
+    platformFeeMinor: platformMinor,
+  };
+}
+
 module.exports = {
   toMinorUnits,
   fromMinorUnits,
   money,
   driverEarningFromGross,
+  taxExclusiveSplitFromGross,
 };

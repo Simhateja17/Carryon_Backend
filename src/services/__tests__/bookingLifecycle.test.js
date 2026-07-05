@@ -4,6 +4,7 @@ const {
   canUserCancel,
   canDriverCancel,
   isSettlementEligible,
+  creditDriverEarning,
   money,
   isDeliveryOtpActive,
   ALLOWED_TRANSITIONS,
@@ -128,6 +129,45 @@ describe('Booking Lifecycle — Settlement eligibility', () => {
       deliveryOtpVerifiedAt: new Date(),
       paymentStatus: 'COMPLETED',
     })).toBe(false);
+  });
+});
+
+describe('Booking Lifecycle — Settlement accounting', () => {
+  test('credits driver and platform from pre-tax subtotal', async () => {
+    const tx = {
+      driverWallet: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'wallet-1', driverId: 'driver-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'wallet-1' }),
+      },
+      driverWalletTransaction: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'tx-1' }),
+      },
+    };
+
+    await creditDriverEarning(tx, 'driver-1', {
+      id: 'booking-1',
+      orderCode: 'ORD-000151',
+      finalPrice: 4.65,
+    });
+
+    expect(tx.driverWalletTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        walletId: 'wallet-1',
+        type: 'DELIVERY_EARNING',
+        amount: 3.86,
+        grossAmount: 4.65,
+        platformFeeAmount: 0.53,
+        jobId: 'booking-1',
+      }),
+    });
+    expect(tx.driverWallet.update).toHaveBeenCalledWith({
+      where: { id: 'wallet-1' },
+      data: {
+        balance: { increment: 3.86 },
+        lifetimeEarnings: { increment: 3.86 },
+      },
+    });
   });
 });
 

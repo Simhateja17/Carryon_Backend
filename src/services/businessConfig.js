@@ -27,7 +27,7 @@ const VEHICLE_CATALOG = [
 const VALID_VEHICLE_TYPES = VEHICLE_CATALOG.map((entry) => entry.type);
 const VEHICLE_CATALOG_BY_TYPE = new Map(VEHICLE_CATALOG.map((entry) => [entry.type, entry]));
 
-const VALID_PAYMENT_METHODS = ['CASH', 'UPI', 'CARD', 'WALLET'];
+const VALID_PAYMENT_METHODS = ['STRIPE'];
 
 const DRIVER_COMMISSION_RATE = Number(process.env.DRIVER_COMMISSION_RATE || 0.88);
 const DRIVER_WITHDRAWAL_MIN_AMOUNT = Number(process.env.DRIVER_WITHDRAWAL_MIN_AMOUNT || 50);

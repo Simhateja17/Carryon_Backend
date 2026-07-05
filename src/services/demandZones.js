@@ -1,7 +1,7 @@
 const prisma = require('../lib/prisma');
 const { haversineKm: distanceKm } = require('../lib/distance');
 
-const ACTIVE_DEMAND_STATUSES = ['SEARCHING_DRIVER', 'PENDING'];
+const ACTIVE_DEMAND_STATUSES = ['SEARCHING_DRIVER'];
 const DEFAULT_RADIUS_KM = 10;
 const MAX_RADIUS_KM = 50;
 function haversineKm(a, b) {
@@ -62,6 +62,7 @@ async function computeDemandZones({ lat, lng, radiusKm, vehicleType }) {
     prisma.booking.findMany({
       where: {
         status: { in: ACTIVE_DEMAND_STATUSES },
+        paymentStatus: 'COMPLETED',
         ...(normalizedVehicleType && { vehicleType: normalizedVehicleType }),
       },
       include: { pickupAddress: true },

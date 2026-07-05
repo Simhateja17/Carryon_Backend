@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { handleStripeEvent } = require('./stripeWebhookProcessor');
+const { notifyNearbyDrivers } = require('./dispatch');
 
 const MAX_ATTEMPTS = 4;
 
@@ -33,8 +34,9 @@ async function processWebhookEvent(eventRecord) {
     return eventRecord;
   }
 
+  let postCommitTasks = [];
   try {
-    return await prisma.$transaction(async (tx) => {
+    const processedEvent = await prisma.$transaction(async (tx) => {
       const current = await tx.webhookEvent.findUnique({ where: { id: eventRecord.id } });
       if (!current || current.status === 'PROCESSED' || current.status === 'FAILED') return current;
 
@@ -44,7 +46,8 @@ async function processWebhookEvent(eventRecord) {
       });
 
       if (current.provider === 'stripe') {
-        await handleStripeEvent(tx, current.payload);
+        const tasks = await handleStripeEvent(tx, current.payload);
+        postCommitTasks = Array.isArray(tasks) ? tasks : [];
       }
 
       return tx.webhookEvent.update({
@@ -57,6 +60,9 @@ async function processWebhookEvent(eventRecord) {
         },
       });
     });
+
+    await runPostCommitTasks(postCommitTasks);
+    return processedEvent;
   } catch (err) {
     const retryCount = (eventRecord.retryCount || 0) + 1;
     const failed = retryCount >= MAX_ATTEMPTS;
@@ -68,6 +74,20 @@ async function processWebhookEvent(eventRecord) {
         lastError: err.message || String(err),
         nextAttemptAt: failed ? null : nextAttemptAt(retryCount),
       },
+    });
+  }
+}
+
+async function runPostCommitTasks(tasks) {
+  for (const task of tasks || []) {
+    if (task?.type !== 'DISPATCH_BOOKING' || !task.bookingId) continue;
+    const booking = await prisma.booking.findUnique({
+      where: { id: task.bookingId },
+      include: { pickupAddress: true, deliveryAddress: true, driver: true },
+    });
+    if (!booking || booking.status !== 'SEARCHING_DRIVER' || booking.paymentStatus !== 'COMPLETED') continue;
+    notifyNearbyDrivers(booking).catch((err) => {
+      console.error('[webhook-inbox] post-payment dispatch failed:', err.message);
     });
   }
 }
