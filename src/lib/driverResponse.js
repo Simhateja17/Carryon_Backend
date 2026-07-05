@@ -20,6 +20,7 @@ const MALAYSIAN_STATES = new Set([
 ]);
 const VEHICLE_OWNERSHIPS = new Set(['OWNED', 'LEASED', 'COMPANY_PROVIDED']);
 const INSURANCE_COVERAGE_TYPES = new Set(['COMPREHENSIVE', 'THIRD_PARTY', 'THIRD_PARTY_FIRE_THEFT']);
+const { getSignedUrl } = require('./supabase');
 
 function enumOrNull(value, allowed) {
   if (typeof value !== 'string') return null;
@@ -63,8 +64,28 @@ function serializeDriver(driver) {
   };
 }
 
+async function serializeDriverWithMedia(driver) {
+  const serialized = serializeDriver(driver);
+  if (!serialized) return null;
+
+  let photoUrl = null;
+  if (serialized.photo) {
+    try {
+      photoUrl = await getSignedUrl(serialized.photo, 3600);
+    } catch (error) {
+      console.error('[driver-response] failed to sign driver photo:', error.message);
+    }
+  }
+
+  return {
+    ...serialized,
+    photoUrl,
+  };
+}
+
 module.exports = {
   enumOrNull,
   serializeDriver,
+  serializeDriverWithMedia,
   serializeDriverVehicle,
 };

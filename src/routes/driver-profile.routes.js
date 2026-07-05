@@ -10,7 +10,7 @@ const {
   removePushDevice,
 } = require('../lib/pushDevices');
 const { isSupportedLanguageCode, normalizeLanguageCode } = require('../lib/supportedLanguages');
-const { serializeDriver } = require('../lib/driverResponse');
+const { serializeDriverWithMedia } = require('../lib/driverResponse');
 const { recordAudit } = require('../services/auditLog');
 
 const router = Router();
@@ -23,7 +23,7 @@ router.get('/', async (req, res, next) => {
       where: { id: req.driver.id },
       include: { documents: true, vehicle: true },
     });
-    res.json({ success: true, data: serializeDriver(driver) });
+    res.json({ success: true, data: await serializeDriverWithMedia(driver) });
   } catch (err) {
     next(err);
   }
@@ -50,7 +50,7 @@ router.put('/', async (req, res, next) => {
       },
       include: { documents: true, vehicle: true },
     });
-    res.json({ success: true, data: serializeDriver(driver) });
+    res.json({ success: true, data: await serializeDriverWithMedia(driver) });
   } catch (err) {
     next(err);
   }
@@ -116,7 +116,7 @@ router.put('/bank-details', async (req, res, next) => {
       return updated;
     });
 
-    res.json({ success: true, data: serializeDriver(driver) });
+    res.json({ success: true, data: await serializeDriverWithMedia(driver) });
   } catch (err) {
     next(err);
   }

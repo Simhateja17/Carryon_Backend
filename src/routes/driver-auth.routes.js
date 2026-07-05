@@ -4,7 +4,7 @@ const { authenticateDriver } = require('../middleware/driverAuth');
 const { AppError } = require('../middleware/errorHandler');
 const { maskEmail } = require('../lib/maskEmail');
 const { normalizeLanguageCode } = require('../lib/supportedLanguages');
-const { serializeDriver } = require('../lib/driverResponse');
+const { serializeDriverWithMedia } = require('../lib/driverResponse');
 const { OTP_LENGTH, isValidOtp, normalizeOtp } = require('../lib/otp');
 const {
   normalizeEmail,
@@ -158,7 +158,7 @@ router.post('/verify-otp', async (req, res, next) => {
     console.log(`[driver-auth] OTP verified for ${maskEmail(email)} via SMS ${maskPhone(phone)} (mode=${mode})`);
     res.json({
       success: true,
-      driver: serializeDriver(driver),
+      driver: await serializeDriverWithMedia(driver),
       isNewDriver,
       token,
       refreshToken,
@@ -213,7 +213,7 @@ router.post('/sync', authenticateDriver, async (req, res, next) => {
       console.log('[driver-auth] sync — found existing driver id:', driver.id);
     }
 
-    res.json({ success: true, driver: serializeDriver(driver), isNewDriver });
+    res.json({ success: true, driver: await serializeDriverWithMedia(driver), isNewDriver });
   } catch (err) {
     console.error('[driver-auth] sync failed: unexpected error', {
       message: err.message,
@@ -279,7 +279,7 @@ router.post('/register', authenticateDriver, async (req, res, next) => {
     });
     console.log('[driver-auth] register — driverId:', driver.id, 'name:', driver.name, 'phone:', driver.phone);
 
-    res.json({ success: true, driver: serializeDriver(driver) });
+    res.json({ success: true, driver: await serializeDriverWithMedia(driver) });
   } catch (err) {
     console.error('[driver-auth] register failed: unexpected error', {
       message: err.message,
