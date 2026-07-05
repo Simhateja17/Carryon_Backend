@@ -14,12 +14,8 @@ function isPendingPaymentFresh(payment, now = new Date()) {
   return payment?.status === 'PENDING' && paymentExpiresAt(payment.createdAt).getTime() > now.getTime();
 }
 
-function isStripeModeMismatch(err) {
-  return err?.type === 'StripeInvalidRequestError'
-    && err?.code === 'resource_missing'
-    && typeof err?.message === 'string'
-    && err.message.includes('a similar object exists in')
-    && err.message.includes('mode');
+function isMissingStripeResource(err) {
+  return err?.type === 'StripeInvalidRequestError' && err?.code === 'resource_missing';
 }
 
 async function createStripeCustomer(user, { persist = isStripeLiveMode() } = {}) {
@@ -46,10 +42,10 @@ async function ensureStripeCustomer(user) {
       await getStripe().customers.retrieve(user.stripeCustomerId);
       return user.stripeCustomerId;
     } catch (err) {
-      if (!isStripeModeMismatch(err)) throw err;
+      if (!isMissingStripeResource(err)) throw err;
 
       console.warn(
-        '[booking-payments] ignoring saved Stripe customer from different mode',
+        '[booking-payments] ignoring missing or incompatible saved Stripe customer',
         user.stripeCustomerId,
         'currentMode:',
         isStripeLiveMode() ? 'live' : 'test'
@@ -128,9 +124,9 @@ async function createOrReuseBookingPaymentIntent({ booking, user, now = new Date
         return bookingPaymentPayload(latestPayment, paymentIntent);
       }
     } catch (err) {
-      if (!isStripeModeMismatch(err)) throw err;
+      if (!isMissingStripeResource(err)) throw err;
       console.warn(
-        '[booking-payments] ignoring pending PaymentIntent from different Stripe mode',
+        '[booking-payments] ignoring missing or incompatible pending PaymentIntent',
         latestPayment.stripePaymentIntentId,
         'currentMode:',
         isStripeLiveMode() ? 'live' : 'test'
