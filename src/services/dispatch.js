@@ -32,6 +32,10 @@ const DRIVER_DISPATCH_SELECT = {
   currentLongitude: true,
   documents: { select: { type: true, status: true, expiryDate: true } },
   vehicle: { select: { type: true } },
+  bankName: true,
+  bankAccountHolder: true,
+  bankAccountNumber: true,
+  bankDetailsStatus: true,
 };
 
 // ── Incoming job queries for driver app ─────────────────────
