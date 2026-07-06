@@ -24,6 +24,10 @@ const { recordAudit } = require('../services/auditLog');
 const { computeCancellationOutcome, isRegularBookingMode, validateBookingLocations, validateOptionalBookingLocations } = require('../services/bookingPolicy');
 const { executeUserLifecycleCommand } = require('../services/deliveryLifecycle');
 const {
+  DRIVER_DISPATCH_SELECT,
+  driverDispatchDecision,
+} = require('../services/dispatch');
+const {
   idempotencyKeyFromRequest,
   validateIdempotencyKey,
   idempotencyExpiresAt,
@@ -433,12 +437,55 @@ router.post('/:id/cancel', async (req, res, next) => {
     const { reason } = parseBody(bookingCancelSchema, req.body);
     console.log('[booking] POST cancel — userId:', req.user.userId, 'bookingId:', req.params.id, 'reason:', reason || 'none');
 
-    const booking = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    const booking = await prisma.booking.findUnique({ where: { id: req.params.id }, include: bookingIncludes });
     if (!booking) return next(new AppError('Booking not found', 404));
     if (booking.userId !== req.user.userId) return next(new AppError('Not authorized', 403));
 
     if (!canUserCancel(booking.status)) {
       return next(new AppError(`Cannot cancel a ${booking.status.toLowerCase()} booking`, 400));
+    }
+
+    let searchCancelCandidates = [];
+    if (booking.status === 'SEARCHING_DRIVER') {
+      const onlineDrivers = typeof prisma.driver?.findMany === 'function'
+        ? await prisma.driver.findMany({
+          where: { isOnline: true },
+          select: DRIVER_DISPATCH_SELECT,
+        })
+        : [];
+      searchCancelCandidates = typeof driverDispatchDecision === 'function'
+        ? onlineDrivers.map((driver) => driverDispatchDecision(booking, driver))
+        : [];
+      console.log(
+        '[booking] search_cancel_requested',
+        'bookingId:', booking.id,
+        'orderCode:', booking.orderCode || '',
+        'userId:', req.user.userId,
+        'onlineDriverCount:', onlineDrivers.length,
+        'eligibleNearbyDriverCount:', searchCancelCandidates.filter((candidate) => candidate.eligible).length,
+        'eligibleNearbyDriverIds:', searchCancelCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.driverId),
+        'pickup:', `${booking.pickupAddress?.latitude},${booking.pickupAddress?.longitude}`,
+        'vehicleType:', booking.vehicleType || 'none'
+      );
+      searchCancelCandidates.forEach((candidate) => {
+        console.log(
+          '[booking] search_cancel_candidate_state',
+          'bookingId:', booking.id,
+          'driverId:', candidate.driverId,
+          'driverName:', candidate.driverName,
+          'distanceKm:', candidate.distanceKm == null ? 'unknown' : candidate.distanceKm,
+          'vehicleType:', candidate.vehicleType || 'none',
+          'wouldHaveSeenJob:', candidate.eligible,
+          'reasons:', candidate.reasons.length > 0 ? candidate.reasons.join(',') : 'eligible'
+        );
+      });
+    } else {
+      console.log(
+        '[booking] cancel_requested_non_search_state',
+        'bookingId:', booking.id,
+        'status:', booking.status,
+        'driverId:', booking.driverId || 'none'
+      );
     }
 
     let cancellationOutcome = null;
@@ -506,6 +553,19 @@ router.post('/:id/cancel', async (req, res, next) => {
       return updated;
     });
     console.log('[booking] Cancelled — bookingId:', req.params.id, 'previousStatus:', booking.status);
+    if (booking.status === 'SEARCHING_DRIVER') {
+      console.log(
+        '[booking] search_cancel_completed',
+        'bookingId:', req.params.id,
+        'previousStatus:', booking.status,
+        'newStatus:', updatedBooking.status,
+        'driverId:', updatedBooking.driverId || 'none',
+        'previousEligibleNearbyDriverCount:', searchCancelCandidates.filter((candidate) => candidate.eligible).length,
+        'futureIncomingResult:', updatedBooking.status === 'CANCELLED'
+          ? 'excluded-from-driver-incoming-active-offers'
+          : 'still-active'
+      );
+    }
 
     if (cancellationOutcome?.shouldRefund && cancellationOutcome.refundAmount > 0) {
       try {

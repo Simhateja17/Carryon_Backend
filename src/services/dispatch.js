@@ -72,26 +72,65 @@ function filterNearbyWithVehicleMatch(bookings, driverLat, driverLng, driverVehi
   });
 }
 
-function selectEligibleDriversForBooking(booking, drivers) {
-  const pickupLat = booking.pickupAddress.latitude;
-  const pickupLng = booking.pickupAddress.longitude;
-  const bookingVehicleType = booking.vehicleType;
+function driverDispatchDecision(booking, driver) {
+  const pickupLat = Number(booking.pickupAddress?.latitude);
+  const pickupLng = Number(booking.pickupAddress?.longitude);
+  const driverLat = Number(driver.currentLatitude);
+  const driverLng = Number(driver.currentLongitude);
+  const distanceKm =
+    Number.isFinite(pickupLat) &&
+    Number.isFinite(pickupLng) &&
+    Number.isFinite(driverLat) &&
+    Number.isFinite(driverLng)
+      ? haversineKm(pickupLat, pickupLng, driverLat, driverLng)
+      : null;
+  const eligibility = evaluateDriverEligibility(driver);
+  const vehicleMatches = !booking.vehicleType || !driver.vehicle?.type || driver.vehicle.type === booking.vehicleType;
+  const withinRadius = distanceKm != null && distanceKm <= DRIVER_SEARCH_RADIUS_KM;
+  const reasons = [];
+  if (driver.isOnline === false) reasons.push('offline');
+  if (!eligibility.canGoOnline) {
+    reasons.push(`eligibility:${eligibility.primaryBlocker?.code || eligibility.status || 'blocked'}`);
+  }
+  if (distanceKm == null) reasons.push('missing-location');
+  if (distanceKm != null && !withinRadius) reasons.push(`outside-radius:${distanceKm.toFixed(2)}km`);
+  if (!vehicleMatches) reasons.push(`vehicle-mismatch:${driver.vehicle?.type || 'none'}!=${booking.vehicleType}`);
 
-  return drivers.filter((driver) => {
-    const withinRadius =
-      haversineKm(pickupLat, pickupLng, driver.currentLatitude, driver.currentLongitude) <= DRIVER_SEARCH_RADIUS_KM;
-    const vehicleMatches = !bookingVehicleType || !driver.vehicle?.type || driver.vehicle.type === bookingVehicleType;
-    return driver.isOnline !== false && evaluateDriverEligibility(driver).canGoOnline && withinRadius && vehicleMatches;
-  });
+  return {
+    driverId: driver.id,
+    driverName: driver.name || driver.email || driver.id,
+    distanceKm: distanceKm == null ? null : Number(distanceKm.toFixed(3)),
+    vehicleType: driver.vehicle?.type || null,
+    eligible: reasons.length === 0,
+    reasons,
+  };
+}
+
+function selectEligibleDriversForBooking(booking, drivers) {
+  return drivers.filter((driver) => driverDispatchDecision(booking, driver).eligible);
 }
 
 async function getIncomingBookingsForDriver(driver, bookingInclude) {
+  console.log(
+    '[dispatch] incoming_check_started',
+    'driverId:', driver.id,
+    'driverName:', driver.name || driver.email || '',
+    'location:', driver.currentLatitude, driver.currentLongitude,
+    'vehicleType:', driver.vehicle?.type || 'none'
+  );
+
   // Fetch bookings this driver has already rejected
   const rejections = await prisma.bookingRejection.findMany({
     where: { driverId: driver.id },
     select: { bookingId: true },
   });
   const rejectedIds = rejections.map(r => r.bookingId);
+  console.log(
+    '[dispatch] incoming_rejections_loaded',
+    'driverId:', driver.id,
+    'rejectedCount:', rejectedIds.length,
+    'rejectedBookingIds:', rejectedIds
+  );
 
   // First priority: explicit admin-targeted requests for this driver
   const targetedNotifications = await prisma.driverNotification.findMany({
@@ -112,6 +151,12 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
       }
     })
     .filter(Boolean);
+  console.log(
+    '[dispatch] incoming_targeted_notifications_loaded',
+    'driverId:', driver.id,
+    'notificationCount:', targetedNotifications.length,
+    'targetedBookingIds:', targetedBookingIds
+  );
 
   const targetedBookings = targetedBookingIds.length > 0
     ? await prisma.booking.findMany({
@@ -125,6 +170,12 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
       take: 50,
     })
     : [];
+  console.log(
+    '[dispatch] incoming_targeted_bookings_loaded',
+    'driverId:', driver.id,
+    'bookingCount:', targetedBookings.length,
+    'bookingIds:', targetedBookings.map((booking) => booking.id)
+  );
 
   const bookings = await prisma.booking.findMany({
     where: activeOfferWhereClause(
@@ -134,12 +185,24 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
+  console.log(
+    '[dispatch] incoming_active_offers_loaded',
+    'driverId:', driver.id,
+    'activeOfferCount:', bookings.length,
+    'activeOfferIds:', bookings.map((booking) => booking.id)
+  );
 
   const nearby = filterNearbyWithVehicleMatch(
     bookings,
     driver.currentLatitude,
     driver.currentLongitude,
     driver.vehicle?.type
+  );
+  console.log(
+    '[dispatch] incoming_nearby_filter_result',
+    'driverId:', driver.id,
+    'nearbyCount:', nearby.length,
+    'nearbyBookingIds:', nearby.map((booking) => booking.id)
   );
 
   const dedupedById = new Map();
@@ -149,7 +212,14 @@ async function getIncomingBookingsForDriver(driver, bookingInclude) {
     }
   });
 
-  return sortByPayout(Array.from(dedupedById.values()));
+  const sorted = sortByPayout(Array.from(dedupedById.values()));
+  console.log(
+    '[dispatch] incoming_result',
+    'driverId:', driver.id,
+    'resultCount:', sorted.length,
+    'resultBookingIds:', sorted.map((booking) => booking.id)
+  );
+  return sorted;
 }
 
 // ── Notify drivers after booking creation ───────────────────
@@ -168,6 +238,30 @@ async function notifyNearbyDrivers(booking) {
   const bookingVehicleType = booking.vehicleType;
 
   console.log('[dispatch] driver search — booking:', booking.id, '| vehicleType:', bookingVehicleType, '| online drivers:', drivers.length);
+  console.log(
+    '[dispatch] driver_search_context',
+    'bookingId:', booking.id,
+    'orderCode:', booking.orderCode || '',
+    'pickup:', `${booking.pickupAddress?.latitude},${booking.pickupAddress?.longitude}`,
+    'pickupAddress:', booking.pickupAddress?.address || '',
+    'deliveryAddress:', booking.deliveryAddress?.address || '',
+    'radiusKm:', DRIVER_SEARCH_RADIUS_KM,
+    'offerExpiryMs:', OFFER_EXPIRY_MS
+  );
+
+  const decisions = drivers.map((driver) => driverDispatchDecision(booking, driver));
+  decisions.forEach((decision) => {
+    console.log(
+      '[dispatch] driver_candidate_decision',
+      'bookingId:', booking.id,
+      'driverId:', decision.driverId,
+      'driverName:', decision.driverName,
+      'distanceKm:', decision.distanceKm == null ? 'unknown' : decision.distanceKm,
+      'vehicleType:', decision.vehicleType || 'none',
+      'eligible:', decision.eligible,
+      'reasons:', decision.reasons.length > 0 ? decision.reasons.join(',') : 'eligible'
+    );
+  });
 
   const nearbyDrivers = selectEligibleDriversForBooking(booking, drivers);
 
@@ -176,10 +270,20 @@ async function notifyNearbyDrivers(booking) {
 
   const nearbyDriverIds = nearbyDrivers.map(d => d.id);
   if (nearbyDriverIds.length === 0) {
-    console.log('[dispatch] no nearby drivers found for booking:', booking.id);
+    console.log(
+      '[dispatch] no nearby drivers found for booking:',
+      booking.id,
+      'candidateCount:', drivers.length,
+      'blockedCandidates:', decisions.filter((decision) => !decision.eligible).length
+    );
     return;
   }
 
+  console.log(
+    '[dispatch] push_job_request_start',
+    'bookingId:', booking.id,
+    'driverIds:', nearbyDriverIds
+  );
   const result = await sendPushToDriverIds(
     nearbyDriverIds,
     { title: 'New Ride Request!', body: 'A new delivery job is available near you.' },
@@ -192,6 +296,9 @@ async function notifyNearbyDrivers(booking) {
     booking.id,
     '— successCount:', result?.successCount,
     'failureCount:', result?.failureCount,
+    'deliveredDriverIds:', result?.deliveredActorIds || [],
+    'failedDriverIds:', result?.failedActorIds || [],
+    'noDeviceDriverIds:', result?.noDeviceActorIds || [],
     'noDeviceDrivers:', result?.noDeviceActorIds?.length || 0
   );
 }
@@ -274,5 +381,6 @@ module.exports = {
   filterNearbyWithVehicleMatch,
   selectEligibleDriversForBooking,
   sortByPayout,
+  driverDispatchDecision,
   OFFER_EXPIRY_MS,
 };

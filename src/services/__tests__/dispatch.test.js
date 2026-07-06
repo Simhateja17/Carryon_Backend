@@ -23,6 +23,10 @@ function dispatchReadyDriver(overrides = {}) {
     isVerified: true,
     verificationStatus: 'APPROVED',
     stripePayoutsEnabled: true,
+    bankName: 'Test Bank',
+    bankAccountHolder: 'Test Driver',
+    bankAccountNumber: '123456789',
+    bankDetailsStatus: 'APPROVED',
     documents: [
       { type: 'DRIVERS_LICENSE', status: 'APPROVED', expiryDate: '2027-01-01' },
       { type: 'DRIVERS_LICENSE_BACK', status: 'APPROVED', expiryDate: '2027-01-01' },
@@ -131,7 +135,10 @@ describe('Dispatch — incoming jobs', () => {
       }),
       dispatchReadyDriver({
         id: 'payout-blocked',
-        stripePayoutsEnabled: false,
+        bankName: '',
+        bankAccountHolder: '',
+        bankAccountNumber: '',
+        bankDetailsStatus: 'PENDING',
         currentLatitude: 3.1001,
         currentLongitude: 101.6001,
         vehicle: { type: 'CAR' },
