@@ -619,6 +619,8 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
           return resultPayload({ booking, message: 'Pickup already verified', locationEvidence });
         }
         assertStatus(booking, 'DRIVER_ARRIVED', normalizedCommand);
+        const proof = payload?.proof || {};
+        const photoUrl = proof.photoUrl || payload?.photoUrl || null;
         const now = new Date();
         const waitCharge = computePickupWaitCharge({
           arrivedAt: booking.driverArrivedAt,
@@ -632,6 +634,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
               otp: '',
               waitTimeMinutes: waitCharge.waitTimeMinutes,
               waitTimeCharge: waitCharge.waitTimeCharge,
+              ...(photoUrl ? { packageImageUrl: photoUrl } : {}),
             },
             include: bookingInclude,
           });
@@ -653,6 +656,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
               status: 'PICKUP_DONE',
               waitTimeMinutes: waitCharge.waitTimeMinutes,
               waitTimeCharge: waitCharge.waitTimeCharge,
+              ...(photoUrl ? { packageImageUrl: photoUrl } : {}),
             },
           });
           await createLifecycleEvent(tx, {
@@ -668,7 +672,7 @@ async function executeLifecycleCommand({ bookingId, actor, driver, command, payl
             longitude: locationEvidence?.longitude ?? null,
             accuracyMeters: locationEvidence?.accuracyMeters ?? null,
             distanceToExpectedMeters: locationEvidence?.distanceToExpectedMeters ?? null,
-            metadata: {},
+            metadata: photoUrl ? { proof: { photoUrl } } : {},
           });
           return changed;
         });

@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../lib/prisma');
 const { AppError } = require('../middleware/errorHandler');
+const { getSignedUrl } = require('../lib/supabase');
 
 const router = Router();
 
@@ -13,6 +14,17 @@ const VALID_VEHICLE_TYPES = new Set([
   'BIKE', 'CAR', 'PICKUP', 'VAN_7FT', 'VAN_9FT',
   'LORRY_10FT', 'LORRY_14FT', 'LORRY_17FT',
 ]);
+
+async function resolveProofUrl(objectRef) {
+  if (!objectRef) return null;
+  if (/^https?:\/\//i.test(objectRef)) return objectRef;
+  try {
+    return await getSignedUrl(objectRef);
+  } catch (error) {
+    console.error('[admin-bookings] Failed to generate signed proof URL:', error);
+    return null;
+  }
+}
 
 // GET /api/admin/bookings
 router.get('/', async (req, res, next) => {
@@ -84,6 +96,8 @@ router.get('/', async (req, res, next) => {
           finalPrice: true,
           createdAt: true,
           updatedAt: true,
+          packageImageUrl: true,
+          deliveryProofUrl: true,
           user: {
             select: { id: true, name: true, email: true, phone: true },
           },
@@ -100,6 +114,16 @@ router.get('/', async (req, res, next) => {
       }),
     ]);
 
+    const bookingsWithProofUrls = await Promise.all(
+      bookings.map(async ({ packageImageUrl, deliveryProofUrl, ...booking }) => {
+        const [pickupProofUrl, resolvedDeliveryProofUrl] = await Promise.all([
+          resolveProofUrl(packageImageUrl),
+          resolveProofUrl(deliveryProofUrl),
+        ]);
+        return { ...booking, pickupProofUrl, deliveryProofUrl: resolvedDeliveryProofUrl };
+      })
+    );
+
     console.log(
       '[admin-bookings] GET / — page:', page,
       'limit:', limit,
@@ -109,7 +133,7 @@ router.get('/', async (req, res, next) => {
 
     res.json({
       success: true,
-      data: bookings,
+      data: bookingsWithProofUrls,
       total,
       page,
       limit,
